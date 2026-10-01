@@ -1,0 +1,13 @@
+{
+  "kind": "marinara.personal-extension",
+  "version": 1,
+  "config": {
+    "name": "Offstage",
+    "version": "0.7.0",
+    "description": "A side panel for group roleplay scenes: who's here (here / away), whispers only the checked characters hear, character emotions, reply mode (dialog / reaction, length), private notes in one character's ear, and markers on hidden messages. Russian / English interface.",
+    "runtime": "client",
+    "capabilities": ["full_page_access"],
+    "jsPath": "extension.js",
+    "cssPath": "extension.css"
+  }
+}

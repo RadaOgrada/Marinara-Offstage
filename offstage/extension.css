@@ -1,0 +1,594 @@
+.kulisy-tab {
+  position: fixed;
+  right: 0;
+  top: 42%;
+  z-index: 9000;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  padding: 12px 6px;
+  border: 1px solid var(--border, #333);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  background: var(--card, #141414);
+  color: var(--foreground, #ddd);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  opacity: 0.8;
+}
+.kulisy-tab:hover {
+  opacity: 1;
+}
+.kulisy-tab[hidden],
+.kulisy-panel[hidden],
+.kulisy-note[hidden] {
+  display: none;
+}
+
+.kulisy-panel {
+  position: fixed;
+  right: 12px;
+  top: 72px;
+  z-index: 9001;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius, 10px);
+  background: var(--popover, var(--card, #141414));
+  color: var(--popover-foreground, var(--foreground, #ddd));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  font-size: 14px;
+  backdrop-filter: blur(8px);
+}
+
+.kulisy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border, #333);
+}
+.kulisy-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.kulisy-head-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* RU / EN switch */
+.kulisy-lang {
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 4px 6px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.kulisy-lang:hover {
+  opacity: 1;
+}
+.kulisy-close {
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.kulisy-close:hover {
+  opacity: 1;
+}
+
+.kulisy-section h3 {
+  margin: 6px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground, #999);
+}
+.kulisy-label {
+  display: block;
+  margin: 8px 0 4px;
+  font-size: 12px;
+  color: var(--muted-foreground, #999);
+}
+.kulisy-panel textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--input, var(--border, #333));
+  border-radius: 6px;
+  background: var(--background, #0b0b0b);
+  color: var(--foreground, #ddd);
+  font: inherit;
+}
+.kulisy-panel textarea:focus {
+  outline: 1px solid var(--ring, var(--primary, #888));
+}
+
+.kulisy-who {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kulisy-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.kulisy-person input {
+  accent-color: var(--primary, #888);
+}
+
+.kulisy-note {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--destructive, #a33) 20%, transparent);
+  font-size: 12px;
+}
+
+.kulisy-send {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px;
+  border: none;
+  border-radius: 6px;
+  background: var(--primary, #555);
+  color: var(--primary-foreground, #fff);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.kulisy-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.kulisy-status {
+  min-height: 1em;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground, #999);
+}
+.kulisy-status[data-kind="error"] {
+  color: var(--destructive, #e66);
+}
+
+/* "Who hears it" marker on hidden messages — visible only to the user, never sent to the model */
+.mari-message-bubble[data-kulisy-note]::before,
+[data-message-id][data-kulisy-note]::before {
+  content: attr(data-kulisy-note);
+  display: block;
+  padding: 8px 16px 0;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.3;
+  color: var(--muted-foreground, #999);
+  opacity: 0.85;
+}
+
+/* folding sections */
+.kulisy-fold {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.kulisy-fold::after {
+  content: "▾";
+  font-size: 11px;
+}
+.kulisy-fold:hover {
+  color: var(--foreground, #ddd);
+}
+.kulisy-section.is-folded > :not(.kulisy-fold) {
+  display: none !important;
+}
+.kulisy-section.is-folded > .kulisy-fold {
+  margin-bottom: 2px;
+}
+.kulisy-section.is-folded > .kulisy-fold::after {
+  content: "▸";
+}
+
+/* Who's here */
+.kulisy-section + .kulisy-section {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #333);
+}
+.kulisy-here {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kulisy-here-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kulisy-here-row.is-away .kulisy-here-name,
+.kulisy-person.is-away {
+  opacity: 0.5;
+}
+.kulisy-person.is-away {
+  cursor: default;
+}
+.kulisy-here-toggle {
+  min-width: 84px;
+  padding: 3px 10px;
+  border: 1px solid var(--border, #333);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary, #555) 25%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.kulisy-here-toggle[data-state="away"] {
+  background: transparent;
+  color: var(--muted-foreground, #999);
+  border-style: dashed;
+}
+.kulisy-here-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.kulisy-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted-foreground, #999);
+}
+
+/* In their ear */
+.kulisy-ear {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.kulisy-ear-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.kulisy-ear-volume {
+  display: inline-flex;
+  border: 1px solid var(--border, #333);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.kulisy-ear-volume button {
+  padding: 2px 10px;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground, #999);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.kulisy-ear-volume button[data-on="1"] {
+  background: color-mix(in srgb, var(--primary, #555) 35%, transparent);
+  color: var(--foreground, #ddd);
+}
+.kulisy-ear-state {
+  min-height: 1em;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted-foreground, #999);
+}
+.kulisy-ear-state[data-kind="error"] {
+  color: var(--destructive, #e66);
+}
+
+/* Emotions */
+.kulisy-feel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kulisy-feel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.kulisy-feel-head:hover,
+.kulisy-feel-row.is-open .kulisy-feel-head {
+  background: color-mix(in srgb, var(--primary, #555) 15%, transparent);
+}
+.kulisy-feel-name {
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kulisy-feel-summary {
+  display: inline-flex;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 13px;
+}
+.kulisy-feel-chip {
+  white-space: nowrap;
+}
+.kulisy-feel-arrow {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted-foreground, #999);
+}
+.kulisy-feel-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+  margin: 6px 0 4px;
+}
+.kulisy-feel-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.kulisy-feel-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--primary, #555) 12%, transparent);
+}
+.kulisy-feel-btn.is-on {
+  opacity: 1;
+  border-color: var(--primary, #888);
+  background: color-mix(in srgb, var(--primary, #555) 35%, transparent);
+}
+.kulisy-feel-dots {
+  height: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 8px;
+  letter-spacing: -1px;
+  color: var(--foreground, #ddd);
+}
+.kulisy-feel-clear,
+.kulisy-clear {
+  display: block;
+  margin: 2px 0 4px auto;
+  padding: 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--primary, #888) 60%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary, #555) 14%, transparent);
+  color: var(--foreground, #ddd);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.kulisy-feel-clear:hover,
+.kulisy-clear:hover {
+  border-color: var(--primary, #888);
+  background: color-mix(in srgb, var(--primary, #555) 28%, transparent);
+}
+.kulisy-feel-item {
+  margin: 4px 0 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--primary, #555) 10%, transparent);
+  font-size: 13px;
+}
+.kulisy-feel-item-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kulisy-feel-level {
+  flex: 0 0 auto;
+  min-width: 76px;
+  padding: 4px 10px;
+  border: 1px solid var(--primary, #888);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--foreground, #ddd);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.kulisy-feel-level[data-lv="3"] {
+  background: color-mix(in srgb, var(--primary, #555) 45%, transparent);
+}
+.kulisy-feel-level[data-lv="1"] {
+  border-style: dashed;
+  color: var(--muted-foreground, #999);
+}
+.kulisy-feel-to {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.kulisy-feel-to label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.kulisy-feel-to input {
+  accent-color: var(--primary, #888);
+}
+.kulisy-feel-to-label {
+  color: var(--muted-foreground, #999);
+}
+.kulisy-feel-row .kulisy-ear-state {
+  padding: 0 6px;
+}
+.kulisy-feel-row .kulisy-ear-state[data-kind="error"] {
+  color: var(--destructive, #e66);
+}
+
+/* Mode */
+.kulisy-mode-badge {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--foreground, #ddd);
+}
+.kulisy-section:not(.is-folded) .kulisy-mode-badge {
+  display: none;
+}
+.kulisy-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kulisy-mode-row {
+  display: grid;
+  grid-template-columns: 78px 1fr;
+  align-items: start;
+  gap: 6px;
+}
+.kulisy-mode-row.is-all {
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border, #333);
+}
+.kulisy-mode-name {
+  padding-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.kulisy-mode-row.is-all .kulisy-mode-name {
+  font-weight: 600;
+}
+.kulisy-mode-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kulisy-mode-group {
+  display: flex;
+  gap: 4px;
+}
+.kulisy-mode-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 4px 4px;
+  border: 1px solid var(--border, #333);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground, #999);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.kulisy-mode-btn:hover {
+  color: var(--foreground, #ddd);
+}
+.kulisy-mode-btn[data-state="on"] {
+  border-color: var(--primary, #888);
+  background: color-mix(in srgb, var(--primary, #555) 45%, transparent);
+  color: var(--foreground, #ddd);
+}
+.kulisy-mode-btn[data-state="inherit"] {
+  border-style: dashed;
+  border-color: var(--primary, #888);
+  background: color-mix(in srgb, var(--primary, #555) 15%, transparent);
+  color: var(--foreground, #ddd);
+}
+.kulisy-mode-btn[data-state="crossed"] {
+  border-style: dashed;
+  text-decoration: line-through;
+}
+.kulisy-mode-state:empty {
+  display: none;
+}
+.kulisy-mode-state[data-kind="error"] {
+  color: var(--destructive, #e66);
+}
+/* a dot on the tab while a mode is pressed */
+.kulisy-tab.has-mode::after {
+  content: " ●";
+  color: var(--primary, #888);
+}
+
+/* "Clear all" / "Bring everyone back" / "Erase all" buttons in sections */
+.kulisy-clear {
+  margin-top: 8px;
+}
+.kulisy-clear[hidden] {
+  display: none;
+}
+.kulisy-clear:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.kulisy-clear[data-armed="1"] {
+  color: var(--destructive, #e66);
+  border-color: var(--destructive, #e66);
+}
+
+/* The "Everyone" row in Mode has its own color (teal): its buttons are tinted even when not
+   pressed; pale buttons inherited from "Everyone" in personal rows use the same color */
+.kulisy-panel {
+  --kulisy-all: #56c7de;
+}
+.kulisy-mode-row.is-all .kulisy-mode-name {
+  color: var(--kulisy-all);
+}
+.kulisy-mode-row.is-all .kulisy-mode-btn {
+  border-color: color-mix(in srgb, var(--kulisy-all) 45%, transparent);
+  background: color-mix(in srgb, var(--kulisy-all) 10%, transparent);
+  color: var(--foreground, #ddd);
+}
+.kulisy-mode-row.is-all .kulisy-mode-btn[data-state="on"] {
+  border-color: var(--kulisy-all);
+  background: color-mix(in srgb, var(--kulisy-all) 45%, transparent);
+}
+.kulisy-mode-btn[data-state="inherit"],
+.kulisy-mode-btn[data-state="crossed"] {
+  border-color: var(--kulisy-all);
+  background: color-mix(in srgb, var(--kulisy-all) 14%, transparent);
+}
+.kulisy-mode-btn[data-state="crossed"] {
+  background: transparent;
+}
