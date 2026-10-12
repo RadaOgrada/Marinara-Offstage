@@ -6,7 +6,7 @@ who is in the room, who hears a whisper, what a character feels, and how they an
 
 ![Offstage next to a group chat, Vintage look in the dark palette](screenshots/hero.png)
 
-> Tested on **Marinara Engine 2.5.0** (Windows host, played from Chrome, an iPad and an iPhone).
+> Tested on **Marinara Engine 2.5.0**.
 > The interface is in **English and Russian**; the switch is in the panel's header. По-русски: [README.ru.md](README.ru.md).
 
 ## What it does
@@ -67,7 +67,7 @@ On a phone the panel opens from the curtain button in the top bar:
 
 ## Requirements
 
-- Marinara Engine 2.5.0 (built on 2.4.6, tested on 2.5.0).
+- Marinara Engine 2.5.0.
 - A **group chat** in **Individual** mode for whispers and *away*
   (chat settings → Group Chat → Mode). Emotions, mode and notes should work in one-on-one
   chats too, but group chats are where it has been tested.
@@ -120,40 +120,19 @@ An empty outlet adds nothing to the prompt when no mode is pressed.
 
 ## Why full page access
 
-Marinara's safe sandbox can't do what this panel needs. A sandboxed extension can't read
-messages, can't hide a message from one character, and can't write lorebook entries or chat
-metadata. So Offstage runs as page code, like WeatherTweaker and other pre-sandbox
-extensions. Here is everything it does:
+Marinara's sandbox can't read messages, hide a message from one character, or write lorebooks
+and chat metadata, so Offstage runs as page code. In short:
 
-- **Talks only to your own Marinara** through `marinara.fetch` (so Marinara counts its
-  traffic). No outside network, no analytics. The Vintage pictures and font are inside the
-  extension.
-- **Reads** characters, personas, the open chat, its messages, its own lorebook, and the
-  chat's preset (only to look for the outlet macro).
-- **Writes:**
-  - your two messages when you send a whisper (**Everyone** and **Whisper**);
-  - per-message `hiddenFromAICharacterIds` (Marinara's own "hide from this character" flag)
-    plus a small `kulisy` note in the message's `extra`;
-  - chat metadata keys: `kulisyAway`, `kulisyFeelings`, `kulisyMode`, `kulisyEarLorebookId`;
-  - one lorebook per chat, **"In their ear — <chat name>"**, bound to that chat only. It holds
-    the notes plus the entries **"Emotions — <name>"** and **"Mode — <name>"**. Each entry
-    is constant and filtered to a single character. The panel creates, updates and deletes
-    entries in this lorebook only.
-- **Touches the page**, and undoes all of it when you disable the extension:
-  - wraps `localStorage.setItem/removeItem` to learn which chat is open *in this tab*;
-  - finds Marinara's React Query client, reads cached messages and refreshes them right away;
-  - watches the page (a MutationObserver) to put the 🔒 / 🤫 labels on message bubbles as a
-    `data-kulisy-note` attribute;
-  - listens for Escape and for taps outside the panel. A tap outside only closes the panel;
-    the click right after it is swallowed so you don't press something underneath by accident;
-  - adds its own tab (or top-bar button on phones) and panel, sets `data-offstage-look` /
-    `data-offstage-palette` on the page, and adds the Vintage pictures as one `<style>` the
-    first time Vintage is shown (Marinara itself injects the main stylesheet);
-  - watches the Damask theme's palette (for Auto) and closes the panel when the theme's
-    Appearance menu opens, so the two never overlap.
-- **Remembers** your whisper checkboxes, the panel language and the look in its private
-  extension storage (plus `modeTexts`, a legacy key from the Russian version), and folded
-  sections in `localStorage` per device.
+- **Talks only to your own Marinara.** No outside network, no analytics. The Vintage pictures
+  and font are inside the extension.
+- **Reads** characters, personas, the open chat and its messages, and the chat's preset (only to
+  find the outlet macro).
+- **Writes** the two messages of a whisper, Marinara's own "hidden from this character" flag on
+  messages, a few `kulisy*` keys in chat metadata, and one lorebook per chat,
+  **"In their ear — <chat name>"** (notes, emotions, mode). Other lorebooks stay untouched.
+- **On the page** it adds its tab, the panel and the 🔒 / 🤫 labels. Disabling the extension
+  removes all of it.
+- **Remembers** your choices in its own extension storage, and folded sections in your browser.
 
 The code is one readable file, [`offstage/extension.js`](offstage/extension.js), plus
 [`offstage/extension.css`](offstage/extension.css). Please read it before approving: that's
