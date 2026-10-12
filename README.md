@@ -4,14 +4,15 @@ A side panel for **group roleplay scenes** in [Marinara Engine](https://github.c
 In the middle of a scene, without slash commands or digging through lorebooks, you decide
 who is in the room, who hears a whisper, what a character feels, and how they answer next.
 
-![Offstage next to a group chat](screenshots/hero.png)
+![Offstage next to a group chat, Vintage look in the dark palette](screenshots/hero.png)
 
-> Built and used on **Marinara Engine 2.4.6** (Windows host, played from Chrome and an iPad).
-> The interface is in **English and Russian**; the switch is in the panel's header.
+> Tested on **Marinara Engine 2.5.0** (Windows host, played from Chrome, an iPad and an iPhone).
+> The interface is in **English and Russian**; the switch is in the panel's header. По-русски: [README.ru.md](README.ru.md).
 
 ## What it does
 
-A tab labeled **Offstage** sits on the right edge of any chat. It opens a floating panel with
+On desktop and iPad a tab labeled **Offstage** sits on the right edge of any chat. On phones
+there is a **curtain button** in Marinara's top bar instead. Either opens a floating panel with
 five sections. Tap a section's heading to fold it.
 
 **Who's here.** Each character has a *here / away* switch. While a character is away, every
@@ -39,11 +40,34 @@ author's note; **loud** lands right before their reply.
 **Markers.** Hidden messages get a small label that only you see: 🔒 hidden from those who
 were away, 🤫 *heard by: …* on whispers. The model never sees the labels.
 
-<img src="screenshots/panel.png" alt="The whole panel" width="320">
+<img src="screenshots/panel.png" alt="The whole panel: Vintage (dark) and Classic" width="640">
+
+## Looks
+
+The **palette button** in the panel's header (*Panel look*) opens a strip with the looks:
+
+- **Auto** (the default): **Vintage** in the palette of the
+  [Damask](https://github.com/RadaOgrada/Marinara-Damask) theme while the theme is on, and it
+  switches when you switch the theme's palette; **Classic** without the theme.
+- **Classic:** the original look, in Marinara's own colors, with your system's emoji for the
+  emotions.
+- **Vintage: dark / light / warm.** Hand-drawn emotion icons, a framed panel on damask paper,
+  serif type. It works without the theme too.
+
+The look you picked is highlighted; under Auto, the look Auto is showing right now has a dashed
+outline. Like the language, the choice is saved once for every device that opens your Marinara.
+
+![Vintage dark, light and warm, and Classic](screenshots/looks.png)
+
+<img src="screenshots/picker.png" alt="The look picker" width="336">
+
+On a phone the panel opens from the curtain button in the top bar:
+
+<img src="screenshots/phone.png" alt="Offstage on a phone: the curtain button and the open panel" width="612">
 
 ## Requirements
 
-- Marinara Engine 2.4.6 or close to it.
+- Marinara Engine 2.5.0 (built on 2.4.6, tested on 2.5.0).
 - A **group chat** in **Individual** mode for whispers and *away*
   (chat settings → Group Chat → Mode). Emotions, mode and notes should work in one-on-one
   chats too, but group chats are where it has been tested.
@@ -60,24 +84,25 @@ third-party extensions first.
    ENABLE_EXTERNAL_EXTENSIONS=true
    ```
    Add the line if it isn't there. Restart Marinara.
-2. **Allow imports in the app.** **Settings → Advanced → Danger Zone**, scroll down, read the
-   warning and turn on **Allow third-party extension imports**.
-3. **Import.** Download `Offstage-<version>.personal-extension.zip` from
+2. **Allow imports in the app.** **Settings → Advanced → Danger Zone**, read the warning, turn on
+   **Allow third-party extension imports** and confirm **I Understand, Enable**.
+3. **Import.** Download `Offstage-0.9.1.personal-extension.zip` from
    [Releases](../../releases) (don't unzip it). **Settings → Addons → External Extensions →
    Import Extension File** and pick the zip. (**Import Extension Folder** takes this
    repository's `offstage` folder instead.)
-4. **Approve.** Offstage appears disabled, marked *Needs approval · Full page access*. Open it,
-   press **Enable** and confirm **Run Exact Code**.
-5. Open a group chat: the **Offstage** tab appears on the right.
+4. **Approve.** Offstage appears disabled, marked *Needs approval · Full page access*. Press the
+   power icon on its row (**Review and run**) and confirm **Run Exact Code**.
+5. Open a group chat: the **Offstage** tab appears on the right (on a phone, the curtain button
+   in the top bar).
 
 Using Marinara from a phone or another computer on your network? Importing also needs admin
 access: set `ADMIN_SECRET` on the server and enter the same value under
 **Settings → Advanced → Admin Access**. Once installed, the panel loads in every browser that
 opens your Marinara.
 
-**Update:** import the new zip and confirm **Save Disabled Update**, then **Enable → Run Exact
-Code** again. Your settings and chats are kept. **Remove:** Disable, then delete it in
-External Extensions.
+**Update:** import the new zip and confirm **Save Disabled Update**, then **Review and run →
+Run Exact Code** again. Your settings and chats are kept. **Remove:** Disable (the power icon),
+then delete it with the trash icon in External Extensions.
 
 ## Optional: give Mode the last word
 
@@ -101,7 +126,8 @@ metadata. So Offstage runs as page code, like WeatherTweaker and other pre-sandb
 extensions. Here is everything it does:
 
 - **Talks only to your own Marinara** through `marinara.fetch` (so Marinara counts its
-  traffic). No outside network, no analytics.
+  traffic). No outside network, no analytics. The Vintage pictures and font are inside the
+  extension.
 - **Reads** characters, personas, the open chat, its messages, its own lorebook, and the
   chat's preset (only to look for the outlet macro).
 - **Writes:**
@@ -120,13 +146,18 @@ extensions. Here is everything it does:
     `data-kulisy-note` attribute;
   - listens for Escape and for taps outside the panel. A tap outside only closes the panel;
     the click right after it is swallowed so you don't press something underneath by accident;
-  - adds its own tab and panel (Marinara itself injects the stylesheet).
-- **Remembers** your whisper checkboxes and the panel language in its private extension
-  storage (plus `modeTexts`, a legacy key from the Russian version), and folded sections in
-  `localStorage` per device.
+  - adds its own tab (or top-bar button on phones) and panel, sets `data-offstage-look` /
+    `data-offstage-palette` on the page, and adds the Vintage pictures as one `<style>` the
+    first time Vintage is shown (Marinara itself injects the main stylesheet);
+  - watches the Damask theme's palette (for Auto) and closes the panel when the theme's
+    Appearance menu opens, so the two never overlap.
+- **Remembers** your whisper checkboxes, the panel language and the look in its private
+  extension storage (plus `modeTexts`, a legacy key from the Russian version), and folded
+  sections in `localStorage` per device.
 
-The code is one readable file, [`offstage/extension.js`](offstage/extension.js). Please read
-it before approving: that's what the approval step is for.
+The code is one readable file, [`offstage/extension.js`](offstage/extension.js), plus
+[`offstage/extension.css`](offstage/extension.css). Please read it before approving: that's
+what the approval step is for.
 
 ("Kulisy" is the panel's original Russian name, *Кулисы*, "the wings of a stage". Internal
 keys keep it so older chats keep working.)
@@ -160,4 +191,9 @@ your Marinara.
 
 ## License
 
-[MIT](LICENSE). Emoji are your system's own.
+- **Code:** [MIT](LICENSE).
+- **Classic** uses your system's own emoji.
+- **Font:** Literata (The Literata Project Authors), SIL Open Font License,
+  [`offstage/OFL-Literata.txt`](offstage/OFL-Literata.txt).
+
+`LICENSE` and `OFL-Literata.txt` are inside the release zip too.
