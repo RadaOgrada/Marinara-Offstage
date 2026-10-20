@@ -3,8 +3,8 @@
   "version": 1,
   "config": {
     "name": "Offstage",
-    "version": "0.9.1",
-    "description": "A side panel for group roleplay scenes: who's here (here / away), whispers only the checked characters hear, character emotions, reply mode (dialog / reaction, length), private notes in one character's ear, and markers on hidden messages. Two looks: Classic and Vintage (dark / light / warm), Auto with the Damask theme. Russian / English interface.",
+    "version": "2.0.0",
+    "description": "A director's desk for group roleplay. A panel with Scene, Fate and Log tabs: who's here (here / away), emotions, reply mode (dialogue / reaction / move, length), notes in one character's ear, several people inside one card, life offstage (where an absent character was, kept as their secret) and entering a scene from the doorway. A masks button next to Send adds to your turn: an attempt die (easy / normal / hard; a regenerate keeps the outcome), a whisper only the checked characters hear, an event from the game's deck, truth or lie. The deck belongs to the chat folder, cards by event size, and can draw by itself. Developer mode: rewrite the texts sent to the model and share them as a file. Russian / English interface.",
     "runtime": "client",
     "capabilities": [
       "full_page_access"

@@ -1,16 +1,16 @@
 // Offstage — a side panel for group scenes in Marinara Engine.
 // Who's here (here / away), whispers, emotions, reply mode, private notes "in their ear",
-// and markers on hidden messages. Russian / English interface. Two looks: Classic (0.7.0) and
-// Vintage (0.8; dark / light / warm), Auto by the Damask theme (ex-Concept Leya) — the "look" button in the panel's head.
+// and markers on hidden messages. Russian / English interface. One look, Marinara's native (the Vintage look left in 0.9.23).
 // Runs inside Marinara's page (full_page_access) and talks only to Marinara's own /api.
 //
 // Internal identifiers (chat metadata keys, CSS classes, storage keys) keep the original
 // "kulisy" prefix (the panel's Russian name) so existing chats keep working.
 
-const VERSION = "0.9.1";
+const VERSION = "2.0.0";
 const ACTIVE_CHAT_KEY = "marinara-active-chat-id";
 const AWAY_KEY = "kulisyAway"; // chat metadata: { characterId → createdAt of the last message when they left }
 const EAR_KEY = "kulisyEarLorebookId"; // chat metadata: id of this chat's "in their ear" lorebook
+const CAST_SEEN_KEY = "kulisyCastSeen"; // chat metadata: the cards Offstage has already seen in this chat (newcomers)
 const EAR_LOUD_DEPTH = 1; // "loud" — right before the reply
 const FEEL_KEY = "kulisyFeelings"; // chat metadata: { characterId → [{ e: emotion, lv: 1..3, to: [id | "user"] }] }
 const FEEL_MAX = 3;
@@ -18,6 +18,10 @@ const USER_TARGET = "user"; // the user's persona in the "toward" checkboxes
 const MODE_KEY = "kulisyMode"; // chat metadata: { all | characterId → { f: form, l: length } }
 const MODE_ALL = "all"; // the "Everyone" row
 const MODE_OFF = "off"; // in a personal row: "as usual", even though "Everyone" has it pressed
+const DECK_KEY = "kulisyDeck"; // chat metadata: { tone } of the scene; the cards are in storage (see "the event deck")
+const DECK_HAND_KEY = "kulisyDeckHand"; // chat metadata: the last hand and the reply it went to (see "the event deck")
+const TRUTH_HAND_KEY = "kulisyTruthHand"; // chat metadata: the last truth roll and its reply (see "truth or lie")
+const DECK_AUTO_KEY = "kulisyDeckAuto"; // chat metadata: { f, t, skip, n } — the deck drawing by itself (see "the event deck")
 
 // ---------- language ----------
 // Every visible word and every text the model reads lives here. "ru" is the original
@@ -28,14 +32,18 @@ const I18N = {
     title: "Кулисы",
     close: "Закрыть",
     lang_title: "Язык панели",
-    look_title: "Вид панели",
-    look_auto: "Авто",
-    look_classic: "Классика",
-    look_vintage: "Винтаж",
-    pal_dark: "тёмная",
-    pal_light: "светлая",
-    pal_warm: "тёплая",
-    look_hint: "Авто: с темой Damask — Винтаж в её гамме, без темы — Классика.",
+    set_title: "Настройки",
+    set_lang: "Язык",
+    help_on: "Показать подсказки",
+    help_off: "Спрятать подсказки",
+    help_all: "Как отвечают все, у кого нет своего режима.",
+    help_scene: "Тап по имени — всё о нём. «Не здесь» — не слышит.",
+    help_feel: "Скрытый фон: виден в тоне и поступках.",
+    help_mode: "Главнее «для всех»; держится до отжатия.",
+    help_ear: "Только он. Тихо — помнит, громко — сразу.",
+    help_whisper: "«Всем» видят все, шёпот — только отмеченные.",
+    pin_on: "Закрепить панель: тап мимо её не закроет",
+    pin_off: "Открепить панель",
     sec_here: "Кто рядом",
     here_clear: "Вернуть всех",
     here_hint: "«Не здесь» — персонаж не слышит ничего нового в чате, пока не вернёшь его.",
@@ -50,6 +58,14 @@ const I18N = {
     sec_feel: "Эмоции",
     sec_mode: "Режим",
     sec_ear: "На ухо",
+    page_scene: "Сцена",
+    page_deck: "Судьба",
+    page_log: "Журнал",
+    pages_label: "Вкладки Кулис",
+    mode_all_title: "Режим для всех",
+    feel_label: "Эмоции · до трёх",
+    char_ear: "есть записка на ухо",
+    char_secrets: "конвертов: {n}",
     ear_clear: "Стереть все",
     ear_hint:
       "Знает только этот персонаж и только в этом чате, пока не сотрёшь. «Тихо» — как заметка автора, «громко» — прямо перед его ответом.",
@@ -122,14 +138,18 @@ const I18N = {
     title: "Offstage",
     close: "Close",
     lang_title: "Panel language",
-    look_title: "Panel look",
-    look_auto: "Auto",
-    look_classic: "Classic",
-    look_vintage: "Vintage",
-    pal_dark: "dark",
-    pal_light: "light",
-    pal_warm: "warm",
-    look_hint: "Auto: Vintage in the Damask theme's palette while the theme is on, Classic without it.",
+    set_title: "Settings",
+    set_lang: "Language",
+    help_on: "Show hints",
+    help_off: "Hide hints",
+    help_all: "How everyone replies unless they have their own mode.",
+    help_scene: "Tap a name for all about them. “Away”: hears nothing.",
+    help_feel: "A hidden undercurrent: shows in tone and actions.",
+    help_mode: "Beats “everyone”; stays until you tap it again.",
+    help_ear: "Only they know. Quiet — kept; loud — at once.",
+    help_whisper: "Everyone sees “Everyone”; only the checked hear the whisper.",
+    pin_on: "Pin the panel: a tap outside won't close it",
+    pin_off: "Unpin the panel",
     sec_here: "Who's here",
     here_clear: "Bring everyone back",
     here_hint: "“Away”: the character hears nothing new in the chat until you bring them back.",
@@ -144,6 +164,14 @@ const I18N = {
     sec_feel: "Emotions",
     sec_mode: "Mode",
     sec_ear: "In their ear",
+    page_scene: "Scene",
+    page_deck: "Fate",
+    page_log: "Log",
+    pages_label: "Offstage tabs",
+    mode_all_title: "Mode for everyone",
+    feel_label: "Emotions · up to three",
+    char_ear: "has a note in their ear",
+    char_secrets: "envelopes: {n}",
     ear_clear: "Erase all",
     ear_hint:
       "Only this character knows it, and only in this chat, until you erase it. “Quiet” works like an author's note; “loud” lands right before their reply.",
@@ -421,38 +449,125 @@ if (LANGS.includes(saved.lang)) {
   marinara.storage.patch({ lang }).catch((error) => marinara.log.warn("Could not save the language", error));
 }
 
-// ---------- look: Classic (the 0.7.0 look) or Vintage (the 0.8 look) in three palettes ----------
-// Saved in storage ("look"): "auto" (default), "classic", "vintage-dark", "vintage-light", "vintage-warm".
-// Auto = Vintage in the gamut of the Damask theme (ex-Concept Leya; it keeps these hooks) while the theme is on (html.cl-on / data-cl-gamut), Classic
-// without it; it follows the theme's gamut switches live. Everything Vintage needs is in extension.css — the theme's
-// own variables are never read. <html> gets data-offstage-look and, in Vintage only, data-offstage-palette.
-const LOOKS = ["auto", "classic", "vintage-dark", "vintage-light", "vintage-warm"];
-const PALETTES = ["dark", "light", "warm"];
-let lookChoice = LOOKS.includes(saved.look) ? saved.look : "auto";
-let lookNow = null; // what the panel's markup is arranged for: "classic" | "vintage"
-function themeGamut() {
-  const root = document.documentElement;
-  const gamut = root.dataset.clGamut;
-  if (!gamut && !root.classList.contains("cl-on")) return null;
-  return PALETTES.includes(gamut) ? gamut : "dark";
-}
-function resolveLook(choice = lookChoice) {
-  if (choice === "classic") return { look: "classic", palette: null };
-  if (choice.startsWith("vintage-")) return { look: "vintage", palette: choice.slice(8) };
-  const gamut = themeGamut();
-  return gamut ? { look: "vintage", palette: gamut } : { look: "classic", palette: null };
-}
-function isClassic() {
-  return lookNow === "classic";
-}
-
+// Names and casts are re-read when a card was added or edited (Marinara bumps catalogGeneration on any character write).
+let catalogGeneration = null;
 async function loadNames(ids) {
-  if (ids.every((id) => state.names[id])) return;
+  let generation = null;
+  try {
+    const head = await api("/api/characters/catalog?limit=1");
+    generation = head && head.catalogGeneration !== undefined ? head.catalogGeneration : null;
+  } catch (error) {
+    marinara.log.warn("Could not read the character catalog", error);
+  }
+  if (ids.every((id) => state.names[id]) && (generation === null || generation === catalogGeneration)) return;
   const list = await api("/api/characters");
   for (const character of list) {
-    const data = parseMaybeJson(character.data, {});
-    state.names[character.id] = (data && data.name) || character.name || t("unnamed");
+    const data = parseMaybeJson(character.data, {}) || {};
+    state.names[character.id] = data.name || character.name || t("unnamed");
+    readCast(character.id, data);
   }
+  catalogGeneration = generation;
+}
+
+// ---------- several people on one card ----------
+// A card may describe a cast (a family, a party): [CHARACTER: Name] headers, or else repeated "Name:" lines —
+// the same rule as Marinara's character tracker (shared/src/utils/character-cast.ts), at least two people.
+// Each member is a "slot" `<cardId>:cast:<normalized name>` (the tracker's own id form). Emotions, mode and
+// "in their ear" work per slot. Lorebook entries stay filtered to the card (the engine knows only cards) and
+// carry the member in their description ("offstage:cast:<key>"), which never reaches the model.
+// Who's here and whispers stay per card: the engine hides a message from a whole card or not at all.
+const CAST_SEP = ":cast:";
+const CAST_MARK = "offstage:cast:";
+const CAST_MAX = 12;
+const CAST_HEADER_RE = /\[\s*(?:character|char)\s*(?:[:\-–—]\s*)([^\]\r\n]{1,60})\]/giu;
+state.cast = {}; // cardId → [{ slot, name }]
+
+function matchKey(value) {
+  return typeof value === "string" ? value.normalize("NFKC").trim().toLocaleLowerCase().replace(/\s+/gu, " ") : "";
+}
+
+function cleanMemberName(raw) {
+  let name = String(raw).replace(/[*_`"“”'‘’]/gu, "").trim();
+  if (name.endsWith(")")) {
+    const opening = name.lastIndexOf("(");
+    if (opening >= 0 && !name.slice(opening + 1, -1).includes(")")) name = name.slice(0, opening);
+  }
+  return name.replace(/\s+/gu, " ").trim();
+}
+
+function collectMember(raw, into) {
+  const name = cleanMemberName(raw);
+  if (!name || name.length > 60 || /[.!?;]/u.test(name) || name.split(" ").length > 5) return;
+  const key = matchKey(name);
+  if (key && !into.has(key)) into.set(key, name);
+}
+
+function castMembers(data) {
+  const ext = data.extensions && typeof data.extensions === "object" ? data.extensions : {};
+  const fields = [data.description, data.personality, data.scenario, ext.backstory ?? data.backstory, ext.appearance ?? data.appearance];
+  const text = fields.filter((value) => typeof value === "string" && value.length > 0).join("\n");
+  if (!text) return [];
+  const members = new Map();
+  CAST_HEADER_RE.lastIndex = 0;
+  for (const match of text.matchAll(CAST_HEADER_RE)) collectMember(match[1] || "", members);
+  if (members.size < 2) {
+    members.clear();
+    for (const line of text.split(/\r?\n/u)) {
+      const colon = line.search(/[:：]/u);
+      if (colon < 0) continue;
+      const label = line.slice(0, colon).replace(/^[\s*_\-•>]+/u, "");
+      if (!/^(?:full\s+name|name)[\s*_]*$/iu.test(label)) continue;
+      const value = line.slice(colon + 1).replace(/^[\s*_]+/u, "").trimEnd();
+      if (value.length <= 120) collectMember(value, members);
+    }
+  }
+  members.delete(matchKey(data.name));
+  if (members.size < 2) return [];
+  return [...members].slice(0, CAST_MAX);
+}
+
+function readCast(cardId, data) {
+  const list = castMembers(data).map(([key, name]) => ({ slot: `${cardId}${CAST_SEP}${key}`, name }));
+  if (list.length) state.cast[cardId] = list;
+  else delete state.cast[cardId];
+  for (const member of list) state.names[member.slot] = member.name;
+}
+
+function isMember(slot) {
+  return typeof slot === "string" && slot.indexOf(CAST_SEP) > 0;
+}
+
+function cardOf(slot) {
+  const index = typeof slot === "string" ? slot.indexOf(CAST_SEP) : -1;
+  return index > 0 ? slot.slice(0, index) : slot;
+}
+
+// Rows for emotions, mode and "in their ear": each card, its members right under it.
+function castSlots(characterIds) {
+  const out = [];
+  for (const id of characterIds) {
+    out.push(id);
+    for (const member of state.cast[id] || []) out.push(member.slot);
+  }
+  return out;
+}
+
+// What a lorebook entry of this slot looks like to the engine: filtered to the card, the member in the description.
+function entryTarget(slot) {
+  return isMember(slot)
+    ? { characterFilterIds: [cardOf(slot)], description: CAST_MARK + slot.slice(slot.indexOf(CAST_SEP) + CAST_SEP.length) }
+    : { characterFilterIds: [slot] };
+}
+
+function entrySlot(cardId, description) {
+  const mark = String(description || "");
+  return mark.startsWith(CAST_MARK) && mark.length > CAST_MARK.length ? `${cardId}${CAST_SEP}${mark.slice(CAST_MARK.length)}` : cardId;
+}
+
+// Entry titles: a member is shown with their card — "Mode — Anna (The Smiths)".
+function entryTitle(slot) {
+  const name = state.names[slot] || slot;
+  return isMember(slot) ? `${name} (${state.names[cardOf(slot)] || cardOf(slot)})` : name;
 }
 
 function readAway(meta, characterIds) {
@@ -471,6 +586,7 @@ async function loadChat(chatId) {
   await loadNames(characterIds);
   const result = {
     characterIds,
+    slots: castSlots(characterIds), // cards and the people on them (see "several people on one card")
     name: chat.name || "",
     mode: chat.mode,
     groupChatMode: meta.groupChatMode || "merged",
@@ -538,12 +654,11 @@ const tab = document.createElement("button");
 tab.type = "button";
 tab.className = "kulisy-tab";
 tab.hidden = true;
-// The visible tab is the inner face; the button around it is wider — a 44 px tap target at the screen edge.
+// Marinara's native look in either look, like the panel (0.9.18).
+tab.dataset.offstageNative = "";
 // data-no-intuitive-swipe: a drag that starts on the tab never flips a reply in Marinara's chat.
 tab.setAttribute("data-no-intuitive-swipe", "");
-const tabFace = document.createElement("span");
-tabFace.className = "kulisy-tab-face";
-tab.appendChild(tabFace);
+let fateReady = false; // the Fate card's texts are defined in the fate section further down; until then it stays wordless
 
 // Phone (< 768): no tab at the screen edge — it got in the way of the chat (10.10); a curtain button in Marinara's
 // top bar instead, next to its own buttons (after the Damask theme's palette, when the theme is on). Marinara redraws
@@ -576,218 +691,372 @@ function ensureTopButton() {
   if (topBtn.hidden) topBtn.hidden = false;
 }
 
-// Fixed texts carry data-t (text), data-t-ph (placeholder) or data-t-title (tooltip):
-// applyStaticTexts() fills them in the current language.
+// Fixed texts carry data-t (text), data-t-ph (placeholder), data-t-title (tooltip) or data-t-label (aria-label):
+// applyStaticTexts() fills them in the current language; the Fate texts (data-ft…) are filled by paintFateTexts().
+// One panel with three tabs (0.9.18, the new layout of 19.10): Scene — a row per character; Deck — the deck (and, where
+// there is no move button, this turn's event and "Truth or lie"); Log — the rolls. The gear holds the language and
+// the turn's options; "?" shows one-line hints (0.9.19). It is in Marinara's native look.
 const panel = document.createElement("aside");
-panel.className = "kulisy-panel";
+panel.className = "kulisy-panel kulisy-fate-panel";
+panel.dataset.offstageNative = "";
 panel.hidden = true;
 panel.innerHTML = `
-  <div class="kulisy-bg" aria-hidden="true"></div>
-  <div class="kulisy-head">
+  <div class="kulisy-head" data-no-intuitive-swipe>
+    <span class="kulisy-grip" aria-hidden="true"></span>
     <span class="kulisy-title" data-t="title"></span>
     <span class="kulisy-head-tools">
-      <button type="button" class="kulisy-look" data-t-title="look_title" aria-expanded="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21a9 9 0 0 1 0-18c4.97 0 9 3.58 9 8 0 1.06-.47 2.08-1.32 2.83-.84.75-1.99 1.17-3.18 1.17H14a2 2 0 0 0-1 3.75A1.3 1.3 0 0 1 12 21"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="10.5" r="1"/></svg></button>
-      <button type="button" class="kulisy-lang" data-t-title="lang_title"></button>
+      <button type="button" class="kulisy-help-btn" aria-pressed="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
+      <button type="button" class="kulisy-look kulisy-gear" aria-expanded="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <button type="button" class="kulisy-pin" aria-pressed="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg></button>
       <button type="button" class="kulisy-close" data-t-title="close">×</button>
     </span>
   </div>
   <div class="kulisy-looks" hidden>
+    <div class="kulisy-label" data-t="set_lang"></div>
     <div class="kulisy-looks-row">
-      <button type="button" class="kulisy-look-opt" data-look="auto" data-t="look_auto"></button>
-      <button type="button" class="kulisy-look-opt" data-look="classic" data-t="look_classic"></button>
+      <button type="button" class="kulisy-look-opt kulisy-lang-opt" data-lang="ru" lang="ru">Русский</button>
+      <button type="button" class="kulisy-look-opt kulisy-lang-opt" data-lang="en" lang="en">English</button>
     </div>
-    <div class="kulisy-label" data-t="look_vintage"></div>
-    <div class="kulisy-looks-row is-pal">
-      <button type="button" class="kulisy-look-opt" data-look="vintage-dark" data-t="pal_dark"></button>
-      <button type="button" class="kulisy-look-opt" data-look="vintage-light" data-t="pal_light"></button>
-      <button type="button" class="kulisy-look-opt" data-look="vintage-warm" data-t="pal_warm"></button>
-    </div>
-    <div class="kulisy-hint" data-t="look_hint"></div>
+    <div class="kulisy-label" data-ft="sec_die"></div>
+    <label class="kulisy-person"><input type="checkbox" class="kulisy-fate-nodie"><span data-ft="nodie"></span></label>
+    <div class="kulisy-hint kulisy-fate-opt-hint kulisy-help" data-ft="nodie_hint"></div>
+    <div class="kulisy-label" data-ft="sec_dev"></div>
+    <label class="kulisy-person"><input type="checkbox" class="kulisy-dev-on"><span data-ft="dev_on"></span></label>
+    <div class="kulisy-hint kulisy-fate-opt-hint kulisy-help" data-ft="dev_on_hint"></div>
   </div>
-  <div class="kulisy-body">
-  <section class="kulisy-section" data-fold="here">
-    <h3 class="kulisy-fold" role="button" tabindex="0" data-t="sec_here"></h3>
-    <div class="kulisy-here"></div>
-    <div class="kulisy-back">
-      <div class="kulisy-hint" data-t="here_hint"></div>
-      <button type="button" class="kulisy-clear kulisy-here-clear" hidden data-t="here_clear"></button>
+  <div class="kulisy-pages" role="tablist" data-t-label="pages_label">
+    <button type="button" role="tab" class="kulisy-page-tab" data-page="scene" data-t="page_scene"></button>
+    <button type="button" role="tab" class="kulisy-page-tab" data-page="deck" data-t="page_deck"></button>
+    <button type="button" role="tab" class="kulisy-page-tab" data-page="log" data-t="page_log"></button>
+    <button type="button" role="tab" class="kulisy-page-tab" data-page="texts" data-ft="dev_page" hidden></button>
+  </div>
+  <div class="kulisy-page" data-page="scene" role="tabpanel">
+    <div class="kulisy-scene-all" hidden>
+      <div class="kulisy-scene-all-head">
+        <span class="kulisy-label" data-t="mode_all_title"></span>
+        <button type="button" class="kulisy-clear kulisy-mode-clear" hidden data-t="clear_all"></button>
+      </div>
+      <div class="kulisy-hint kulisy-help" data-t="help_all"></div>
+      <div class="kulisy-mode"></div>
     </div>
-  </section>
-  <section class="kulisy-section" data-fold="whisper">
-    <h3 class="kulisy-fold" role="button" tabindex="0" data-t="sec_whisper"></h3>
-    <label class="kulisy-label" for="kulisy-all" data-t="all_label"></label>
-    <textarea id="kulisy-all" rows="2" data-t-ph="all_ph"></textarea>
-    <label class="kulisy-label" for="kulisy-whisper" data-t="whisper_label"></label>
-    <textarea id="kulisy-whisper" rows="3" data-t-ph="whisper_ph"></textarea>
-    <div class="kulisy-label" data-t="who_label"></div>
-    <div class="kulisy-who-row">
+    <div class="kulisy-hint kulisy-help kulisy-help-scene" data-t="help_scene"></div>
+    <div class="kulisy-scene"></div>
+    <div class="kulisy-scene-tools">
+      <button type="button" class="kulisy-clear kulisy-here-ask" hidden></button>
+      <button type="button" class="kulisy-clear kulisy-here-clear" hidden data-t="here_clear"></button>
+      <button type="button" class="kulisy-clear kulisy-ear-clear" hidden data-t="ear_clear"></button>
+    </div>
+    <div class="kulisy-ear-state kulisy-mode-state"></div>
+    <section class="kulisy-section" data-fold="scene-whisper">
+      <h3 class="kulisy-fold" role="button" tabindex="0" data-t="sec_whisper"></h3>
+      <div class="kulisy-hint kulisy-help" data-t="help_whisper"></div>
+      <label class="kulisy-label" for="kulisy-all" data-t="all_label"></label>
+      <textarea id="kulisy-all" rows="2" data-t-ph="all_ph"></textarea>
+      <label class="kulisy-label" for="kulisy-whisper" data-t="whisper_label"></label>
+      <textarea id="kulisy-whisper" rows="3" data-t-ph="whisper_ph"></textarea>
+      <div class="kulisy-label" data-t="who_label"></div>
       <div class="kulisy-who"></div>
       <button type="button" class="kulisy-clear kulisy-who-clear" hidden data-t="clear_all"></button>
+      <div class="kulisy-note" hidden></div>
+      <button type="button" class="kulisy-send" data-t="send"></button>
+    </section>
+    <div class="kulisy-status"></div>
+    <div class="kulisy-secret-form">
+      <div class="kulisy-label kulisy-secret-len-label"></div>
+      <div class="kulisy-mode-group kulisy-fate-chips kulisy-secret-len"></div>
+      <div class="kulisy-label" data-ft="secret_kind"></div>
+      <div class="kulisy-mode-group kulisy-fate-chips kulisy-secret-kind"></div>
+      <div class="kulisy-label" data-ft="secret_size"></div>
+      <div class="kulisy-mode-group kulisy-fate-chips kulisy-secret-size"></div>
+      <label class="kulisy-label" for="kulisy-secret-about" data-ft="secret_about"></label>
+      <textarea id="kulisy-secret-about" class="kulisy-secret-about" rows="2" maxlength="300" data-ft-ph="secret_about_ph"></textarea>
+      <button type="button" class="kulisy-send kulisy-secret-go"></button>
+      <div class="kulisy-hint kulisy-fate-card-hint kulisy-secret-note" hidden></div>
     </div>
-    <div class="kulisy-note" hidden></div>
-    <button type="button" class="kulisy-send" data-t="send"></button>
-  </section>
-  <section class="kulisy-section" data-fold="feel">
-    <h3 class="kulisy-fold" role="button" tabindex="0" data-t="sec_feel"></h3>
-    <div class="kulisy-feel"></div>
-  </section>
-  <section class="kulisy-section" data-fold="mode">
-    <h3 class="kulisy-fold" role="button" tabindex="0"><span><span data-t="sec_mode"></span> <span class="kulisy-mode-badge"></span></span></h3>
-    <div class="kulisy-mode"></div>
-    <button type="button" class="kulisy-clear kulisy-mode-clear" hidden data-t="clear_all"></button>
-    <div class="kulisy-ear-state kulisy-mode-state"></div>
-  </section>
-  <section class="kulisy-section" data-fold="ear">
-    <h3 class="kulisy-fold" role="button" tabindex="0" data-t="sec_ear"></h3>
-    <div class="kulisy-ear"></div>
-    <button type="button" class="kulisy-clear kulisy-ear-clear" hidden data-t="ear_clear"></button>
-    <div class="kulisy-hint" data-t="ear_hint"></div>
-  </section>
-  <div class="kulisy-status"></div>
+  </div>
+  <div class="kulisy-page" data-page="deck" role="tabpanel" hidden>
+    <div class="kulisy-card kulisy-surprise-card">
+      <label class="kulisy-person kulisy-surprise"><input type="checkbox" class="kulisy-fate-surprise"><span data-ft="surprise"></span></label>
+      <div class="kulisy-hint kulisy-help" data-ft="surprise_hint"></div>
+    </div>
+    <section class="kulisy-card kulisy-try" hidden>
+      <div class="kulisy-card-head"><div class="kulisy-card-title" data-ft="move_try"></div></div>
+      <div class="kulisy-card-body">
+        <div class="kulisy-hint kulisy-help" data-ft="help_try"></div>
+        <div class="kulisy-try-body"></div>
+      </div>
+    </section>
+    <section class="kulisy-card kulisy-deck-now">
+      <div class="kulisy-card-head"><div class="kulisy-card-title" data-ft="deck_now"></div></div>
+      <div class="kulisy-card-body">
+        <div class="kulisy-hint kulisy-help kulisy-now-pick" data-ft="help_now"></div>
+        <div class="kulisy-mode-group kulisy-fate-chips kulisy-now-pick">
+          <div class="kulisy-deck-draw"></div>
+          <div class="kulisy-truth-roll"></div>
+        </div>
+        <div class="kulisy-fate-armed kulisy-deck-armed" hidden>
+          <span class="kulisy-deck-armed-text"></span>
+          <button type="button" class="kulisy-clear kulisy-deck-cancel" data-ft="deck_cancel"></button>
+        </div>
+        <div class="kulisy-hint kulisy-fate-card-hint kulisy-deck-hint" hidden></div>
+        <div class="kulisy-fate-armed kulisy-truth-armed" hidden>
+          <span data-ft="truth_armed"></span>
+          <button type="button" class="kulisy-clear kulisy-truth-cancel" data-ft="deck_cancel"></button>
+        </div>
+        <div class="kulisy-hint kulisy-fate-card-hint kulisy-truth-note" hidden></div>
+      </div>
+    </section>
+    <section class="kulisy-card kulisy-deck">
+      <div class="kulisy-card-head">
+        <div class="kulisy-card-title" data-ft="sec_deck"></div>
+        <div class="kulisy-card-sub kulisy-deck-count"></div>
+      </div>
+      <div class="kulisy-card-body">
+        <div class="kulisy-label" data-ft="deck_tone"></div>
+        <div class="kulisy-hint kulisy-help" data-ft="help_tone"></div>
+        <div class="kulisy-mode-group kulisy-fate-chips kulisy-deck-tone"></div>
+        <div class="kulisy-label" data-ft="deck_auto"></div>
+        <div class="kulisy-hint kulisy-help" data-ft="deck_auto_hint"></div>
+        <div class="kulisy-mode-group kulisy-fate-chips kulisy-deck-auto"></div>
+        <div class="kulisy-hint kulisy-deck-auto-hint" hidden></div>
+      </div>
+      <div class="kulisy-card-body kulisy-deck-cards">
+        <div class="kulisy-hint kulisy-help" data-ft="help_cards"></div>
+        <div class="kulisy-deck-list"></div>
+        <div class="kulisy-deck-tools">
+          <button type="button" class="kulisy-deck-bulk-open">
+            <span data-ft="deck_bulk"></span>
+            <span class="kulisy-deck-edit" aria-hidden="true">›</span>
+          </button>
+          <button type="button" class="kulisy-clear kulisy-deck-more" aria-expanded="false" data-ft="deck_more"></button>
+        </div>
+        <div class="kulisy-deck-more-box" hidden>
+          <button type="button" class="kulisy-clear kulisy-deck-shuffle" data-ft="deck_shuffle"></button>
+          <button type="button" class="kulisy-clear kulisy-deck-clear-all"></button>
+        </div>
+        <div class="kulisy-deck-bulk" hidden>
+          <div class="kulisy-hint" data-ft="deck_bulk_hint"></div>
+          <textarea class="kulisy-deck-bulk-text" rows="8" data-ft-ph="deck_bulk_ph"></textarea>
+          <div class="kulisy-deck-actions">
+            <button type="button" class="kulisy-send kulisy-deck-bulk-add" data-ft="deck_bulk_add"></button>
+            <button type="button" class="kulisy-clear kulisy-deck-bulk-cancel" data-ft="deck_cancel"></button>
+          </div>
+        </div>
+        <div class="kulisy-hint kulisy-deck-bulk-result" hidden></div>
+        <div class="kulisy-fate-armed kulisy-deck-undo" hidden>
+          <span class="kulisy-deck-undo-text"></span>
+          <button type="button" class="kulisy-clear kulisy-deck-undo-btn" data-ft="deck_undo"></button>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div class="kulisy-page" data-page="log" role="tabpanel" hidden>
+    <section class="kulisy-section">
+      <div class="kulisy-hint kulisy-help" data-ft="help_log"></div>
+      <div class="kulisy-fate-log"></div>
+    </section>
+  </div>
+  <div class="kulisy-page" data-page="texts" role="tabpanel" hidden>
+    <div class="kulisy-hint kulisy-dev-intro"></div>
+    <div class="kulisy-dev-groups"></div>
   </div>
 `;
 
 function applyStaticTexts() {
   paintTab();
-  el.look.setAttribute("aria-label", t("look_title"));
+  el.look.setAttribute("aria-label", t("set_title"));
+  el.look.title = t("set_title");
   topBtn.setAttribute("aria-label", t("title"));
   topBtn.title = t("title");
   for (const node of panel.querySelectorAll("[data-t]")) node.textContent = t(node.dataset.t);
   for (const node of panel.querySelectorAll("[data-t-ph]")) node.placeholder = t(node.dataset.tPh);
   for (const node of panel.querySelectorAll("[data-t-title]")) node.title = t(node.dataset.tTitle);
-  // The language button shows the language you switch TO.
-  el.lang.textContent = lang === "ru" ? "EN" : "RU";
+  for (const node of panel.querySelectorAll("[data-t-label]")) node.setAttribute("aria-label", t(node.dataset.tLabel));
+  for (const button of el.langs) button.setAttribute("aria-pressed", String(button.dataset.lang === lang));
+  paintPin();
+  paintHelp();
 }
 
 const el = {
+  head: panel.querySelector(".kulisy-head"),
   look: panel.querySelector(".kulisy-look"),
   looks: panel.querySelector(".kulisy-looks"),
-  lang: panel.querySelector(".kulisy-lang"),
+  langs: panel.querySelectorAll(".kulisy-lang-opt"),
+  help: panel.querySelector(".kulisy-help-btn"),
+  pin: panel.querySelector(".kulisy-pin"),
   close: panel.querySelector(".kulisy-close"),
-  here: panel.querySelector(".kulisy-here"),
+  pages: panel.querySelector(".kulisy-pages"),
+  scene: panel.querySelector(".kulisy-scene"),
+  sceneAll: panel.querySelector(".kulisy-scene-all"),
   all: panel.querySelector("#kulisy-all"),
   whisper: panel.querySelector("#kulisy-whisper"),
   who: panel.querySelector(".kulisy-who"),
   note: panel.querySelector(".kulisy-note"),
   send: panel.querySelector(".kulisy-send"),
-  ear: panel.querySelector(".kulisy-ear"),
-  feel: panel.querySelector(".kulisy-feel"),
   mode: panel.querySelector(".kulisy-mode"),
-  modeBadge: panel.querySelector(".kulisy-mode-badge"),
   modeState: panel.querySelector(".kulisy-mode-state"),
   hereClear: panel.querySelector(".kulisy-here-clear"),
   whoClear: panel.querySelector(".kulisy-who-clear"),
   modeClear: panel.querySelector(".kulisy-mode-clear"),
   earClear: panel.querySelector(".kulisy-ear-clear"),
   status: panel.querySelector(".kulisy-status"),
+  hereAsk: panel.querySelector(".kulisy-here-ask"),
 };
 
-// The pieces that only the Vintage markup has (0.8): Classic is the 0.7.0 markup — the same nodes, only moved
-// (their listeners and references stay). panel.contains, not isConnected: the first arrangement runs before the panel
-// is on the page.
-const dom = {
-  bg: panel.querySelector(".kulisy-bg"),
-  head: panel.querySelector(".kulisy-head"),
-  body: panel.querySelector(".kulisy-body"),
-  back: panel.querySelector(".kulisy-back"),
-  hereHint: panel.querySelector(".kulisy-back > .kulisy-hint"),
-  whoRow: panel.querySelector(".kulisy-who-row"),
-};
-// The tab: the bare word in Classic, a face inside a wider tap target in Vintage.
 function paintTab() {
-  if (isClassic()) {
-    tab.textContent = t("title");
-    return;
-  }
-  tabFace.textContent = t("title");
-  if (tab.firstChild !== tabFace || tab.childNodes.length !== 1) tab.replaceChildren(tabFace);
+  tab.textContent = t("title");
 }
-function arrangeLook() {
-  if (isClassic()) {
-    dom.bg.remove();
-    if (panel.contains(dom.body)) {
-      dom.body.before(...dom.body.childNodes);
-      dom.body.remove();
-    }
-    if (panel.contains(dom.back)) {
-      dom.back.before(el.hereClear, dom.hereHint); // 0.7.0: the button first, the hint under it
-      dom.back.remove();
-    }
-    if (panel.contains(dom.whoRow)) {
-      dom.whoRow.before(el.who, el.whoClear);
-      dom.whoRow.remove();
-    }
-  } else {
-    if (dom.bg.parentNode !== panel) panel.prepend(dom.bg);
-    if (!panel.contains(dom.body)) {
-      el.looks.after(dom.body);
-      while (dom.body.nextSibling) dom.body.appendChild(dom.body.nextSibling);
-    }
-    if (!panel.contains(dom.back)) {
-      el.hereClear.before(dom.back);
-      dom.back.append(dom.hereHint, el.hereClear);
-    }
-    if (!panel.contains(dom.whoRow)) {
-      el.who.before(dom.whoRow);
-      dom.whoRow.append(el.who, el.whoClear);
-    }
-  }
-  if (el.looks.previousElementSibling !== dom.head) dom.head.after(el.looks);
-}
+// One look since 0.9.23 (Leah 19.10: Vintage removed): the Classic rules hang on html[data-offstage-look="classic"].
+document.documentElement.dataset.offstageLook = "classic";
 function paintLooks() {
-  const now = resolveLook();
-  const nowKey = now.look === "classic" ? "classic" : `vintage-${now.palette}`;
-  for (const button of el.looks.querySelectorAll("[data-look]")) {
-    const key = button.dataset.look;
-    button.setAttribute("aria-pressed", String(key === lookChoice));
-    if (lookChoice === "auto" && key === nowKey) button.dataset.state = "now";
-    else delete button.dataset.state;
-  }
   el.look.setAttribute("aria-expanded", String(!el.looks.hidden));
 }
-let vintageStyle = null;
-function ensureVintageAssets() {
-  if (vintageStyle) return;
-  vintageStyle = document.createElement("style");
-  vintageStyle.id = "offstage-vintage-assets";
-  vintageStyle.textContent = vintageAssetsCss();
-  document.head.appendChild(vintageStyle);
-}
-let lookPalette = null;
-function applyLook() {
-  const { look, palette } = resolveLook();
-  if (look === lookNow && palette === lookPalette) return;
-  const root = document.documentElement;
-  const first = lookNow === null;
-  if (look === "vintage") ensureVintageAssets();
-  root.dataset.offstageLook = look;
-  if (palette) root.dataset.offstagePalette = palette;
-  else delete root.dataset.offstagePalette;
-  lookPalette = palette;
-  if (look !== lookNow) {
-    lookNow = look;
-    arrangeLook();
-    paintTab();
-    if (!first) renderFeel(); // the emotion rows differ (emoji in Classic, the author's drawings in Vintage)
+
+// The Fate card's parts (0.9.6–0.9.17) live in the Fate (ex-Deck) and Log tabs and in the character rows (0.9.18).
+const fel = {
+  surprise: panel.querySelector(".kulisy-fate-surprise"),
+  tryBox: panel.querySelector(".kulisy-try"),
+  tryBody: panel.querySelector(".kulisy-try-body"),
+  noDie: panel.querySelector(".kulisy-fate-nodie"),
+  devOn: panel.querySelector(".kulisy-dev-on"),
+  devIntro: panel.querySelector(".kulisy-dev-intro"),
+  devGroups: panel.querySelector(".kulisy-dev-groups"),
+  log: panel.querySelector(".kulisy-fate-log"),
+  deckTone: panel.querySelector(".kulisy-deck-tone"),
+  deckDraw: panel.querySelector(".kulisy-deck-draw"),
+  deckArmed: panel.querySelector(".kulisy-deck-armed"),
+  deckArmedText: panel.querySelector(".kulisy-deck-armed-text"),
+  deckCancel: panel.querySelector(".kulisy-deck-cancel"),
+  deckHint: panel.querySelector(".kulisy-deck-hint"),
+  deckAuto: panel.querySelector(".kulisy-deck-auto"),
+  deckAutoHint: panel.querySelector(".kulisy-deck-auto-hint"),
+  deckCount: panel.querySelector(".kulisy-deck-count"),
+  deckMore: panel.querySelector(".kulisy-deck-more"),
+  deckMoreBox: panel.querySelector(".kulisy-deck-more-box"),
+  deckList: panel.querySelector(".kulisy-deck-list"),
+  deckShuffle: panel.querySelector(".kulisy-deck-shuffle"),
+  deckBulkOpen: panel.querySelector(".kulisy-deck-bulk-open"),
+  deckClearAll: panel.querySelector(".kulisy-deck-clear-all"),
+  deckBulk: panel.querySelector(".kulisy-deck-bulk"),
+  deckBulkText: panel.querySelector(".kulisy-deck-bulk-text"),
+  deckBulkAdd: panel.querySelector(".kulisy-deck-bulk-add"),
+  deckBulkCancel: panel.querySelector(".kulisy-deck-bulk-cancel"),
+  deckBulkResult: panel.querySelector(".kulisy-deck-bulk-result"),
+  deckUndo: panel.querySelector(".kulisy-deck-undo"),
+  deckUndoText: panel.querySelector(".kulisy-deck-undo-text"),
+  deckUndoBtn: panel.querySelector(".kulisy-deck-undo-btn"),
+  truthRoll: panel.querySelector(".kulisy-truth-roll"),
+  truthArmed: panel.querySelector(".kulisy-truth-armed"),
+  truthCancel: panel.querySelector(".kulisy-truth-cancel"),
+  truthHint: panel.querySelector(".kulisy-truth-note"),
+  secretForm: panel.querySelector(".kulisy-secret-form"),
+  secretLenLabel: panel.querySelector(".kulisy-secret-len-label"),
+  secretLen: panel.querySelector(".kulisy-secret-len"),
+  secretKind: panel.querySelector(".kulisy-secret-kind"),
+  secretSize: panel.querySelector(".kulisy-secret-size"),
+  secretAbout: panel.querySelector(".kulisy-secret-about"),
+  secretGo: panel.querySelector(".kulisy-secret-go"),
+  secretNote: panel.querySelector(".kulisy-secret-note"),
+};
+fel.secretForm.remove(); // "What happened to them?" opens inside that character's row (renderSecrets)
+
+// "Pin" (Leah 18.10): a pinned panel stays open on a tap outside and on Esc, until it is unpinned or closed with x / its
+// tab. Each device remembers its own.
+const PIN_KEY = "kulisy-pinned";
+function readPin(key) {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
   }
-  paintLooks();
-  if (!first && !panel.hidden) placePanel();
 }
-function setLook(choice, persist) {
-  if (!LOOKS.includes(choice)) return;
-  const changed = choice !== lookChoice;
-  lookChoice = choice;
-  applyLook();
-  paintLooks();
-  if (persist && changed) {
-    marinara.storage.patch({ look: choice }).catch((error) => marinara.log.warn("Could not save the look", error));
+let pinned = readPin(PIN_KEY);
+function paintPin() {
+  const label = t(pinned ? "pin_off" : "pin_on");
+  el.pin.setAttribute("aria-pressed", String(pinned));
+  el.pin.setAttribute("aria-label", label);
+  el.pin.title = label;
+}
+el.pin.addEventListener("click", () => {
+  pinned = !pinned;
+  try {
+    localStorage.setItem(PIN_KEY, pinned ? "1" : "0");
+  } catch {
+    // the pin then lasts until the page reloads
   }
+  paintPin();
+});
+// "?" (0.9.19): one-line hints under the headings; each device remembers its own.
+const HELP_KEY = "kulisy-help";
+let helpOn = readPin(HELP_KEY);
+function paintHelp() {
+  const label = t(helpOn ? "help_off" : "help_on");
+  panel.classList.toggle("is-help", helpOn);
+  el.help.setAttribute("aria-pressed", String(helpOn));
+  el.help.setAttribute("aria-label", label);
+  el.help.title = label;
 }
-applyLook();
+el.help.addEventListener("click", () => {
+  helpOn = !helpOn;
+  try {
+    localStorage.setItem(HELP_KEY, helpOn ? "1" : "0");
+  } catch {
+    // the hints then last until the page reloads
+  }
+  paintHelp();
+});
+function pinnedOpen() {
+  return pinned && state.open;
+}
 
 applyStaticTexts();
 document.body.appendChild(tab);
 document.body.appendChild(panel);
+
+// ---------- tabs: Scene · Deck · Log (0.9.18); each device remembers its own last tab ----------
+const PAGE_KEY = "kulisy-page";
+const PAGES = ["scene", "deck", "log", "texts"];
+let devMode = saved.devMode === true; // 0.9.27: developer mode shows the Texts tab (Offstage's storage, all devices)
+let page = "scene";
+try {
+  const stored = localStorage.getItem(PAGE_KEY);
+  if (PAGES.includes(stored)) page = stored;
+} catch {}
+function paintPages() {
+  el.pages.querySelector('[data-page="texts"]').hidden = !devMode;
+  if (page === "texts" && !devMode) page = "scene";
+  for (const button of el.pages.querySelectorAll("[data-page]")) {
+    const on = button.dataset.page === page;
+    button.setAttribute("aria-selected", String(on));
+    button.tabIndex = on ? 0 : -1;
+  }
+  for (const node of panel.querySelectorAll(".kulisy-page")) node.hidden = node.dataset.page !== page;
+}
+function showPage(next) {
+  if (!PAGES.includes(next) || (next === "texts" && !devMode)) return;
+  page = next;
+  try {
+    localStorage.setItem(PAGE_KEY, page);
+  } catch {}
+  paintPages();
+  panel.scrollTop = 0;
+  loadPage();
+}
+// What a tab reads when it is shown, and when the panel opens on it.
+function loadPage() {
+  if (!fateReady || !state.open || !state.chatId) return;
+  if (page === "deck") {
+    setDeckHint("");
+    setTruthHint("");
+    loadDeck();
+  }
+  if (page === "log") void loadFateLog();
+  if (page === "texts") renderPrompts();
+}
+for (const button of el.pages.querySelectorAll("[data-page]")) {
+  button.addEventListener("click", () => showPage(button.dataset.page));
+}
+paintPages();
 
 // ---------- sections fold on a tap on their heading ----------
 // Each device remembers its own folded sections (tablet and desktop separately).
@@ -799,6 +1068,14 @@ try {
 } catch {
   folded = [];
 }
+// 0.9.18: the whisper starts folded (once per device; a later unfold is remembered)
+try {
+  if (localStorage.getItem("kulisy-folded-v2") !== "1") {
+    if (!folded.includes("scene-whisper")) folded.push("scene-whisper");
+    localStorage.setItem(FOLD_KEY, JSON.stringify(folded));
+    localStorage.setItem("kulisy-folded-v2", "1");
+  }
+} catch {}
 function applyFolds() {
   for (const section of panel.querySelectorAll("[data-fold]")) {
     const isFolded = folded.includes(section.dataset.fold);
@@ -830,31 +1107,161 @@ function setStatus(text, kind = "") {
   el.status.dataset.kind = kind;
 }
 
-function renderHere() {
-  el.here.textContent = "";
+// ---------- the Scene tab: one row per character (0.9.18) ----------
+// A folded row shows the character's state — here or away, emotions, mode, a note in their ear, envelopes; a tap on it
+// opens everything about them in one place, one row at a time. Rows are rebuilt only when the cast or the language
+// changes, so a field being typed in is never moved.
+const scene = {
+  sig: "",
+  rows: {}, // slot -> { wrap, open, name, sum, arrow, here, body, feel, mode, ear, secrets }
+  open: null, // the slot whose row is open
+};
+
+function sceneHelp(text) {
+  const hint = document.createElement("div");
+  hint.className = "kulisy-hint kulisy-help";
+  hint.textContent = text;
+  return hint;
+}
+
+function sceneLabel(text) {
+  const label = document.createElement("div");
+  label.className = "kulisy-label";
+  label.textContent = text;
+  return label;
+}
+
+function buildScene() {
   const chat = state.chat;
-  el.hereClear.hidden = !chat || awayIds().length === 0;
-  el.hereClear.disabled = state.awayBusy;
+  const sig = chat ? `${state.chatId}|${chat.slots.join(",")}|${lang}` : "";
+  if (sig === scene.sig) return;
+  scene.sig = sig;
+  scene.rows = {};
+  el.scene.textContent = "";
   if (!chat) return;
-  for (const id of chat.characterIds) {
-    const away = Object.prototype.hasOwnProperty.call(chat.away, id);
-    const row = document.createElement("div");
-    row.className = "kulisy-here-row" + (away ? " is-away" : "");
+  if (scene.open && !chat.slots.includes(scene.open)) scene.open = null;
+  for (const id of chat.slots) {
+    const wrap = document.createElement("div");
+    wrap.className = "kulisy-char" + (isMember(id) ? " is-member" : "");
+    const head = document.createElement("div");
+    head.className = "kulisy-char-head";
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "kulisy-char-open";
     const name = document.createElement("span");
-    name.className = "kulisy-here-name";
-    name.textContent = state.names[id] || id;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "kulisy-here-toggle";
-    button.dataset.state = away ? "away" : "here";
-    button.dataset.characterId = id;
-    button.textContent = away ? t("here_off") : t("here_on");
-    button.title = away ? t("here_title_off") : t("here_title_on");
-    button.disabled = state.awayBusy;
-    button.addEventListener("click", () => void toggleAway(id));
-    row.append(name, button);
-    el.here.appendChild(row);
+    name.className = "kulisy-char-name";
+    const sum = document.createElement("span");
+    sum.className = "kulisy-char-sum";
+    const arrow = document.createElement("span");
+    arrow.className = "kulisy-char-arrow";
+    arrow.setAttribute("aria-hidden", "true");
+    open.append(name, sum, arrow);
+    open.addEventListener("click", () => openSceneRow(scene.open === id ? null : id));
+    head.appendChild(open);
+    // a person on a shared card is here or away with the card ("who's here" hides messages from the whole card)
+    let here = null;
+    if (!isMember(id)) {
+      here = document.createElement("button");
+      here.type = "button";
+      here.className = "kulisy-here-toggle";
+      here.dataset.characterId = id;
+      here.addEventListener("click", () => void toggleAway(id));
+      head.appendChild(here);
+    }
+    const body = document.createElement("div");
+    body.className = "kulisy-char-body";
+    body.hidden = true;
+    const feelBox = document.createElement("div");
+    feelBox.className = "kulisy-char-feel";
+    const modeBox = document.createElement("div");
+    modeBox.className = "kulisy-char-mode";
+    const earBox = document.createElement("div");
+    earBox.className = "kulisy-char-ear";
+    const secretBox = document.createElement("div");
+    secretBox.className = "kulisy-char-secrets";
+    body.append(
+      sceneLabel(t("feel_label")),
+      sceneHelp(t("help_feel")),
+      feelBox,
+      sceneLabel(t("sec_mode")),
+      sceneHelp(t("help_mode")),
+      modeBox,
+      earBox,
+      sceneHelp(t("help_ear")),
+      secretBox,
+    );
+    wrap.append(head, body);
+    el.scene.appendChild(wrap);
+    scene.rows[id] = { wrap, open, name, sum, arrow, here, body, feel: feelBox, mode: modeBox, ear: earBox, secrets: secretBox };
   }
+}
+
+function sceneChip(text, title) {
+  const chip = document.createElement("span");
+  chip.className = "kulisy-char-chip";
+  chip.textContent = text;
+  if (title) chip.title = title;
+  return chip;
+}
+
+// The folded rows: name, state chips, "here / away".
+function paintScene() {
+  const chat = state.chat;
+  if (!chat) return;
+  const envelopes = {};
+  if (fateReady && secrets.chatId === state.chatId) {
+    for (const it of secrets.data.items) envelopes[it.who] = (envelopes[it.who] || 0) + 1;
+  }
+  for (const id of chat.slots) {
+    const row = scene.rows[id];
+    if (!row) continue;
+    const away = Object.prototype.hasOwnProperty.call(chat.away, cardOf(id));
+    const isOpen = scene.open === id;
+    row.wrap.classList.toggle("is-away", away);
+    row.wrap.classList.toggle("is-open", isOpen);
+    row.open.setAttribute("aria-expanded", String(isOpen));
+    row.name.textContent = isMember(id) ? shortName(id) : state.names[id] || id;
+    row.arrow.textContent = isOpen ? "▴" : "▾";
+    row.body.hidden = !isOpen;
+    const chips = [];
+    for (const item of feel.data[id] || []) {
+      const def = FEELING_BY_KEY[item.e];
+      if (def) chips.push(sceneChip(def.emoji + LEVEL_DOTS[item.lv], `${feelWord(def.key)} — ${LEVEL_WORD[lang][item.lv]}`));
+    }
+    const words = modeWords(modeOf(id));
+    if (words) chips.push(sceneChip(words, t("sec_mode")));
+    if (ear.entries[id]) chips.push(sceneChip("👂", t("char_ear")));
+    if (envelopes[id]) chips.push(sceneChip(`✉ ${envelopes[id]}`, t("char_secrets", { n: envelopes[id] })));
+    row.sum.replaceChildren(...chips);
+    if (row.here) {
+      row.here.dataset.state = away ? "away" : "here";
+      row.here.textContent = away ? t("here_off") : t("here_on");
+      row.here.title = away ? t("here_title_off") : t("here_title_on");
+      row.here.disabled = state.awayBusy;
+    }
+  }
+}
+
+function openSceneRow(id) {
+  scene.open = id;
+  if (fateReady && secrets.step && secrets.step !== id) secrets.step = null;
+  renderScene();
+}
+
+function renderScene() {
+  buildScene();
+  renderHere();
+  renderFeel();
+  renderMode();
+  placeEar();
+  if (fateReady) renderSecrets();
+}
+
+// "Who's here" lives on the rows now; "Bring everyone back" under them.
+function renderHere() {
+  el.hereClear.hidden = !state.chat || awayIds().length === 0;
+  el.hereClear.disabled = state.awayBusy;
+  paintScene();
 }
 
 function renderWho() {
@@ -886,11 +1293,13 @@ function renderWho() {
 }
 
 function renderAll() {
-  renderHere();
-  renderWho();
-  renderFeel();
-  renderMode();
   renderEar();
+  renderScene();
+  renderWho();
+  if (fateReady) {
+    renderFatePages();
+    paintSecretOffer();
+  }
 }
 
 function paintWhoClear() {
@@ -920,17 +1329,144 @@ async function toggleHearer(id, on) {
   }
 }
 
-// Where the panel stands: right under Marinara's top bar (measured: its height differs by device and safe area),
-// and where it is on the screen — the damask under its veil (.kulisy-bg) is laid exactly like the page's.
-function placePanel() {
-  let top = 0;
+// ---------- 0.9.20 (Leah 19.10, the new interface, piece 4): a sheet on phones, a panel dragged by its head elsewhere ----------
+// Phone (< 768): the panel comes up from the bottom over the full width, half the screen high; the head (with its grip)
+// drags it up to the full screen, back to half, or down and away (closes); a tap on the head switches half / full.
+// PC and tablet: the head drags the panel anywhere; near the left or right edge or the top bar it sticks to it. Each
+// device remembers the place (localStorage "kulisy-place"); a double click on the head puts it back where it was at first.
+const PLACE_KEY = "kulisy-place";
+const PLACE_SNAP = 32; // px from an edge that count as "at the edge"
+const PLACE_EDGE = 12; // the panel's gap to the screen edge it sticks to
+let place = null; // { side: "left" | "right" | "free", x, y: px | "bar" }
+try {
+  const saved = JSON.parse(localStorage.getItem(PLACE_KEY) || "null");
+  if (saved && ["left", "right", "free"].includes(saved.side)) place = saved;
+} catch {}
+let sheetFull = false;
+let headDrag = null;
+
+function barBottom() {
   const bar = document.querySelector(".mari-topbar");
-  if (bar) {
-    const r = bar.getBoundingClientRect();
-    if (r.height > 0 && r.bottom > 0 && r.bottom < window.innerHeight / 2) top = r.bottom;
+  if (!bar) return 0;
+  const r = bar.getBoundingClientRect();
+  return r.height > 0 && r.bottom > 0 && r.bottom < window.innerHeight / 2 ? r.bottom : 0;
+}
+function savePlace() {
+  try {
+    if (place) localStorage.setItem(PLACE_KEY, JSON.stringify(place));
+    else localStorage.removeItem(PLACE_KEY);
+  } catch {}
+}
+function setPanelXY(x, y, minTop) {
+  const w = panel.offsetWidth || 320;
+  const left = Math.round(Math.min(Math.max(x, 0), Math.max(0, window.innerWidth - w)));
+  const top = Math.round(Math.min(Math.max(y, minTop), Math.max(minTop, window.innerHeight - 120)));
+  panel.style.setProperty("--kulisy-at-x", `${left}px`);
+  panel.style.setProperty("--kulisy-at-y", `${top}px`);
+  panel.classList.add("is-placed");
+}
+// PC and tablet: the remembered place, kept inside the window
+function applyPlace(bar) {
+  if (PHONE.matches || !place) {
+    panel.classList.remove("is-placed");
+    return;
   }
-  if (top) panel.style.setProperty("--kulisy-bar", `${Math.round(top)}px`);
-  else panel.style.removeProperty("--kulisy-bar");
+  const w = panel.offsetWidth || 320;
+  const minTop = bar + PLACE_EDGE;
+  const x = place.side === "left" ? PLACE_EDGE : place.side === "right" ? window.innerWidth - w - PLACE_EDGE : place.x;
+  setPanelXY(x, place.y === "bar" ? minTop : place.y, minTop);
+}
+function setSheet(full) {
+  sheetFull = full;
+  panel.classList.toggle("is-full", full);
+  panel.style.removeProperty("--kulisy-sheet-h");
+}
+function onHeadDown(event) {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  if (event.target instanceof Element && event.target.closest("button")) return;
+  const box = panel.getBoundingClientRect();
+  headDrag = {
+    id: event.pointerId,
+    x0: event.clientX,
+    y0: event.clientY,
+    left: box.left,
+    top: box.top,
+    h: box.height,
+    moved: false,
+    phone: PHONE.matches,
+    bar: barBottom(),
+  };
+  try {
+    el.head.setPointerCapture(event.pointerId);
+  } catch {}
+  if (event.pointerType === "mouse") event.preventDefault(); // no text selection while dragging
+}
+function onHeadMove(event) {
+  const d = headDrag;
+  if (!d || event.pointerId !== d.id) return;
+  const dx = event.clientX - d.x0;
+  const dy = event.clientY - d.y0;
+  if (!d.moved) {
+    if (Math.hypot(dx, dy) < 6) return;
+    d.moved = true;
+    panel.classList.add("is-dragging");
+  }
+  if (d.phone) {
+    const h = Math.min(Math.max(d.h - dy, 60), window.innerHeight - d.bar - 4);
+    panel.style.setProperty("--kulisy-sheet-h", `${Math.round(h)}px`);
+  } else {
+    setPanelXY(d.left + dx, d.top + dy, d.bar + PLACE_EDGE);
+  }
+}
+function onHeadUp(event) {
+  const d = headDrag;
+  if (!d || event.pointerId !== d.id) return;
+  headDrag = null;
+  panel.classList.remove("is-dragging");
+  if (d.phone) {
+    if (!d.moved) {
+      if (event.type === "pointerup") setSheet(!sheetFull);
+      return;
+    }
+    const h = panel.getBoundingClientRect().height;
+    if (h < window.innerHeight * 0.28) {
+      setSheet(false);
+      state.open = false;
+      showTab();
+      return;
+    }
+    setSheet(h > (window.innerHeight * 0.5 + (window.innerHeight - d.bar)) / 2);
+    return;
+  }
+  if (!d.moved) return;
+  const box = panel.getBoundingClientRect();
+  const minTop = d.bar + PLACE_EDGE;
+  const side = box.left <= PLACE_SNAP ? "left" : window.innerWidth - box.right <= PLACE_SNAP ? "right" : "free";
+  place = { side, x: Math.round(box.left), y: box.top - minTop <= PLACE_SNAP ? "bar" : Math.round(box.top) };
+  savePlace();
+  placePanel();
+}
+function onHeadDouble(event) {
+  if (PHONE.matches || (event.target instanceof Element && event.target.closest("button"))) return;
+  place = null;
+  savePlace();
+  placePanel();
+}
+el.head.addEventListener("pointerdown", onHeadDown);
+el.head.addEventListener("pointermove", onHeadMove);
+el.head.addEventListener("pointerup", onHeadUp);
+el.head.addEventListener("pointercancel", onHeadUp);
+el.head.addEventListener("dblclick", onHeadDouble);
+
+// Where the panel stands: right under Marinara's top bar (measured: its height differs by device and safe area) or at
+// the place it was dragged to, and where it is on the screen — the damask under its veil (.kulisy-bg) is laid exactly like
+// the page's. --kulisy-head-h: the tabs stick right under the head, which sticks to the top while the panel scrolls.
+function placePanel(p = panel) {
+  const top = barBottom();
+  if (top) p.style.setProperty("--kulisy-bar", `${Math.round(top)}px`);
+  else p.style.removeProperty("--kulisy-bar");
+  applyPlace(top);
+  p.style.setProperty("--kulisy-head-h", `${el.head.offsetHeight}px`);
   // Phone: the card ends above Marinara's input block, so the block stays in sight (10.10). Not while the keyboard
   // is open — then the block sits on the keyboard and the card needs every pixel.
   let floor = 0;
@@ -940,16 +1476,45 @@ function placePanel() {
     const r = input.getBoundingClientRect();
     if (r.height > 0 && r.top > window.innerHeight / 2) floor = r.top;
   }
-  if (floor) panel.style.setProperty("--kulisy-floor", `${Math.round(floor)}px`);
-  else panel.style.removeProperty("--kulisy-floor");
-  const box = panel.getBoundingClientRect();
-  panel.style.setProperty("--kulisy-x", `${Math.round(box.left)}px`);
-  panel.style.setProperty("--kulisy-y", `${Math.round(box.top)}px`);
+  if (floor) p.style.setProperty("--kulisy-floor", `${Math.round(floor)}px`);
+  else p.style.removeProperty("--kulisy-floor");
+  const box = p.getBoundingClientRect();
+  p.style.setProperty("--kulisy-x", `${Math.round(box.left)}px`);
+  p.style.setProperty("--kulisy-y", `${Math.round(box.top)}px`);
 }
 function onViewportChange() {
   if (!panel.hidden) placePanel();
+  if (fate.pop && fateAnchor()) placeAboveDie(fate.pop);
 }
-
+// Typing on a touch screen (Leah 18.10): once the keyboard has opened, the field being typed in is scrolled into the
+// part of the card the keyboard leaves visible - what Marinara does for its own panels
+// (use-keep-focused-field-above-keyboard.ts); the card itself is kept on the visible screen by CSS (shared.css).
+function onKeyboardViewport(event) {
+  const detail = event && event.detail;
+  const field = document.activeElement;
+  if (!detail || !detail.keyboardOpen || !(field instanceof HTMLTextAreaElement)) return;
+  const card = !panel.hidden && panel.contains(field) ? panel : null;
+  if (!card) return;
+  const reveal = () => {
+    if (document.activeElement !== field) return;
+    const vv = window.visualViewport;
+    const screenTop = vv ? vv.offsetTop : 0;
+    const screenBottom = screenTop + (vv ? vv.height : window.innerHeight);
+    for (let area = field.parentElement; area && card.contains(area); area = area.parentElement) {
+      if (area.scrollHeight <= area.clientHeight || !/auto|scroll/.test(getComputedStyle(area).overflowY)) continue;
+      const frame = area.getBoundingClientRect();
+      const top = Math.max(frame.top + area.clientTop, screenTop) + 8;
+      const bottom = Math.min(frame.top + area.clientTop + area.clientHeight, screenBottom) - 8;
+      const box = field.getBoundingClientRect();
+      if (box.top < top) area.scrollTop += box.top - top;
+      else if (box.bottom > bottom) area.scrollTop += Math.min(box.bottom - bottom, box.top - top);
+    }
+  };
+  requestAnimationFrame(() => {
+    reveal();
+    requestAnimationFrame(reveal);
+  });
+}
 // Contract with the Damask theme (ex-Concept Leya) (and anyone else): while the panel is open, <html> has the class
 // "offstage-open" and the window gets "offstage:panel" {open}; the theme's own menu closes the panel
 // ("concept-leya:menu" {open:true}), so the two never overlap.
@@ -959,12 +1524,13 @@ function showTab() {
   topBtn.setAttribute("aria-pressed", String(!!(state.chatId && state.open)));
   ensureTopButton();
   panel.hidden = !(state.chatId && state.open);
-  const shown = !panel.hidden;
-  if (!shown && !el.looks.hidden) {
+  if (panel.hidden && !el.looks.hidden) {
     el.looks.hidden = true;
     paintLooks();
   }
-  if (shown) placePanel();
+  if (!panel.hidden && !panelShown) setSheet(false);
+  if (!panel.hidden) placePanel();
+  const shown = !panel.hidden;
   if (shown === panelShown) return;
   panelShown = shown;
   document.documentElement.classList.toggle("offstage-open", shown);
@@ -1029,6 +1595,97 @@ async function doSweep(chatId, full) {
   }
 }
 
+// "What can be seen from the doorway": the one coming back sees the chat's last message (it shows what the scene looks like
+// now); everything else they missed stays hidden. Not a whisper they didn't hear. Runs in the sweep queue, after "here".
+function showDoorway(chatId, ids) {
+  const run = sweepChain.then(async () => {
+    if (!ids.length) return;
+    const list = await api(chatPath(chatId, "/messages?limit=5"));
+    const last = (Array.isArray(list) ? list : []).filter((m) => m.role !== "system").pop();
+    if (!last) return;
+    const extra = parseMaybeJson(last.extra, {}) || {};
+    const kulisy = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : {};
+    if (kulisy.kind === "whisper") return;
+    const awayList = Array.isArray(kulisy.away) ? kulisy.away : [];
+    const hidden = Array.isArray(extra.hiddenFromAICharacterIds) ? extra.hiddenFromAICharacterIds : [];
+    const back = ids.filter((id) => awayList.includes(id) && hidden.includes(id));
+    if (!back.length) return;
+    await api(chatPath(chatId, `/messages/${encodeURIComponent(last.id)}/extra`), {
+      method: "PATCH",
+      body: JSON.stringify({
+        hiddenFromAICharacterIds: hidden.filter((id) => !back.includes(id)),
+        kulisy: { ...kulisy, away: awayList.filter((id) => !back.includes(id)) },
+      }),
+    });
+    refreshChatMessages(chatId);
+  });
+  sweepChain = run.catch(() => {});
+  return run.catch((error) => marinara.log.warn("Could not show the doorway", error));
+}
+
+// ---------- newcomers: a card added mid-game knows the scene only from where they came in ----------
+// Marinara gives a card added to a chat the whole history. Offstage marks the last message before they came with Marinara's
+// own per-character start ("New Start" for one character, extra.conversationStartForCharacterIds): everything above it is
+// left out of their prompt (Individual group mode; Merged ignores it), the message itself is what they see coming in. Only a
+// card with no line of their own in this chat and only once the chat has begun (a user message); a card that was here
+// before keeps its past (Who's here handles leaving). The cards already seen are kept in chat metadata (kulisyCastSeen);
+// the first look at a chat only records them. Checked when a chat opens or its cast changes, after Marinara saves the
+// cast, and before every generation (another device may have added them).
+let newcomerChain = Promise.resolve();
+function checkNewcomers(chatId) {
+  newcomerChain = newcomerChain
+    .then(() => doCheckNewcomers(chatId))
+    .catch((error) => marinara.log.warn("Could not check for newcomers", error));
+  return newcomerChain;
+}
+function isDoorway(message, id) {
+  if (message.role === "system") return false;
+  const extra = parseMaybeJson(message.extra, {}) || {};
+  if (extra.hiddenFromAI === true) return false;
+  return !(Array.isArray(extra.hiddenFromAICharacterIds) && extra.hiddenFromAICharacterIds.includes(id));
+}
+async function doCheckNewcomers(chatId) {
+  if (!chatId) return;
+  const chat = await api(chatPath(chatId));
+  if (chat.mode === "game") return;
+  const meta = parseMaybeJson(chat.metadata, {}) || {};
+  const ids = (parseMaybeJson(chat.characterIds, []) || []).filter((id) => typeof id === "string");
+  const seen = Array.isArray(meta[CAST_SEEN_KEY]) ? meta[CAST_SEEN_KEY] : null;
+  if (seen && seen.length === ids.length && ids.every((id) => seen.includes(id))) return;
+  const added = seen ? ids.filter((id) => !seen.includes(id)) : [];
+  const marked = [];
+  if (added.length) {
+    const list = await api(chatPath(chatId, "/messages"));
+    const messages = Array.isArray(list) ? list : [];
+    if (messages.some((m) => m.role === "user")) {
+      for (const id of added) {
+        if (messages.some((m) => m.characterId === id)) continue;
+        const door = [...messages].reverse().find((m) => isDoorway(m, id));
+        if (!door) continue;
+        const extra = parseMaybeJson(door.extra, {}) || {};
+        const starts = Array.isArray(extra.conversationStartForCharacterIds) ? extra.conversationStartForCharacterIds : [];
+        if (!starts.includes(id)) {
+          await api(chatPath(chatId, `/messages/${encodeURIComponent(door.id)}/extra`), {
+            method: "PATCH",
+            body: JSON.stringify({ conversationStartForCharacterIds: [...starts, id] }),
+          });
+          door.extra = { ...extra, conversationStartForCharacterIds: [...starts, id] };
+        }
+        marked.push(id);
+      }
+    }
+  }
+  await api(chatPath(chatId, "/metadata"), { method: "PATCH", body: JSON.stringify({ [CAST_SEEN_KEY]: ids }) });
+  if (marked.length) {
+    refreshChatMessages(chatId);
+    // like coming back from "away": offer to find out what happened to them before they came
+    if (chatId === state.chatId && fateReady) {
+      secrets.offer = { chatId, id: marked[marked.length - 1] };
+      paintSecretOffer();
+    }
+  }
+}
+
 let sweepTimer = null;
 function scheduleSweep() {
   if (sweepTimer !== null || !state.chatId || awayIds().length === 0) return;
@@ -1054,6 +1711,7 @@ async function toggleAway(id) {
       await sweepAway(chatId, true);
       delete away[id];
     } else {
+      void dropArrivals(chatId, castSlots([id])).catch((error) => marinara.log.warn("Could not remove the arrival", error));
       const last = await api(chatPath(chatId, "/messages?limit=1"));
       away[id] = Array.isArray(last) && last.length ? String(last[last.length - 1].createdAt || "") : "";
     }
@@ -1066,7 +1724,11 @@ async function toggleAway(id) {
       state.chat.away = away;
       renderAll();
     }
+    if (wasAway) await showDoorway(chatId, [id]);
     setStatus(wasAway ? t("back", { name }) : t("gone", { name }), "ok");
+    // back from "away": offer to find out what happened to them meanwhile (life between scenes)
+    secrets.offer = wasAway ? { chatId, id } : null;
+    paintSecretOffer();
   } catch (error) {
     marinara.log.error("Could not toggle here / away", error);
     setStatus(t("failed", { err: error.message }), "error");
@@ -1083,6 +1745,7 @@ async function returnAll() {
   state.awayBusy = true;
   renderHere();
   setStatus(t("returning_all"));
+  const back = awayIds();
   try {
     await sweepAway(chatId, true);
     await api(chatPath(chatId, "/metadata"), {
@@ -1094,6 +1757,7 @@ async function returnAll() {
       state.chat.away = {};
       renderAll();
     }
+    await showDoorway(chatId, back);
     setStatus(t("all_back"), "ok");
   } catch (error) {
     marinara.log.error("Could not bring everyone back", error);
@@ -1136,12 +1800,10 @@ async function sendWhisper() {
   let firstSent = false;
   try {
     if (allText) {
-      const body = { chatId, role: "user", characterId: null, content: allText };
-      if (away.length) body.extra = { hiddenFromAICharacterIds: away, kulisy: { away } };
-      await api(chatPath(chatId, "/messages"), { method: "POST", body: JSON.stringify(body) });
+      await api(chatPath(chatId, "/messages"), { method: "POST", body: JSON.stringify(allLine(chatId, allText)) });
       firstSent = true;
     }
-    const whisperKulisy = { kind: "whisper" };
+    const whisperKulisy = { kind: "whisper", turn: 1 };
     if (away.length) whisperKulisy.away = away;
     await api(chatPath(chatId, "/messages"), {
       method: "POST",
@@ -1230,6 +1892,7 @@ function clickEarClear() {
 
 function paintEarRow(id) {
   paintEarClear();
+  paintScene();
   const row = ear.rows[id];
   if (!row) return;
   row.quiet.dataset.on = row.loudMode ? "" : "1";
@@ -1249,29 +1912,31 @@ function setEarRowState(id, text, kind) {
   if (kind !== "busy" && kind !== "error") paintEarRow(id);
 }
 
+// The fields are made once per chat and cast (what is typed survives); the open row shows its character's (placeEar).
 function renderEar() {
   const chat = state.chat;
   if (!chat) {
-    el.ear.textContent = "";
     ear.sig = "";
     ear.rows = {};
     paintEarClear();
     return;
   }
-  const sig = `${state.chatId}|${chat.characterIds.join(",")}`;
+  const sig = `${state.chatId}|${chat.slots.join(",")}`;
   if (sig === ear.sig) return;
   ear.sig = sig;
-  for (const row of Object.values(ear.rows)) if (row.timer !== null) marinara.clearTimeout(row.timer);
-  el.ear.textContent = "";
+  for (const row of Object.values(ear.rows)) {
+    if (row.timer !== null) marinara.clearTimeout(row.timer);
+    row.wrap.remove();
+  }
   ear.rows = {};
-  for (const id of chat.characterIds) {
+  for (const id of chat.slots) {
     const wrap = document.createElement("div");
     wrap.className = "kulisy-ear-row";
     const head = document.createElement("div");
     head.className = "kulisy-ear-head";
     const name = document.createElement("span");
     name.className = "kulisy-ear-name";
-    name.textContent = state.names[id] || id;
+    name.textContent = t("sec_ear");
     const volume = document.createElement("div");
     volume.className = "kulisy-ear-volume";
     const quiet = document.createElement("button");
@@ -1290,10 +1955,9 @@ function renderEar() {
     const stateEl = document.createElement("div");
     stateEl.className = "kulisy-ear-state";
     wrap.append(head, textarea, stateEl);
-    el.ear.appendChild(wrap);
 
     const entry = ear.entries[id];
-    const row = { textarea, quiet, loud, stateEl, loudMode: entry ? entry.depth <= EAR_LOUD_DEPTH : false, dirty: false, timer: null };
+    const row = { wrap, label: name, textarea, quiet, loud, stateEl, loudMode: entry ? entry.depth <= EAR_LOUD_DEPTH : false, dirty: false, timer: null };
     textarea.value = entry ? entry.content : "";
     ear.rows[id] = row;
 
@@ -1327,6 +1991,14 @@ function renderEar() {
     loud.addEventListener("click", () => setMode(true));
     paintEarRow(id);
   }
+  placeEar();
+}
+
+function placeEar() {
+  const id = scene.open;
+  const target = id && scene.rows[id];
+  const row = id && ear.rows[id];
+  if (target && row && row.wrap.parentNode !== target.ear) target.ear.replaceChildren(row.wrap);
 }
 
 async function loadEar(chatId) {
@@ -1342,6 +2014,7 @@ async function loadEar(chatId) {
       for (const entry of Array.isArray(list) ? list : []) {
         const ids = parseMaybeJson(entry.characterFilterIds, []) || [];
         if (entry.characterFilterMode !== "include" || ids.length !== 1) continue;
+        const slot = entrySlot(ids[0], entry.description);
         const item = {
           id: entry.id,
           content: entry.content || "",
@@ -1350,9 +2023,9 @@ async function loadEar(chatId) {
           outletName: entry.outletName || "",
         };
         const entryName = String(entry.name || "");
-        if (FEEL_ENTRY_PREFIXES.some((prefix) => entryName.startsWith(prefix))) feelEntries[ids[0]] = item;
-        else if (MODE_ENTRY_PREFIXES.some((prefix) => entryName.startsWith(prefix))) modeEntries[ids[0]] = item;
-        else entries[ids[0]] = item;
+        if (FEEL_ENTRY_PREFIXES.some((prefix) => entryName.startsWith(prefix))) feelEntries[slot] = item;
+        else if (MODE_ENTRY_PREFIXES.some((prefix) => entryName.startsWith(prefix))) modeEntries[slot] = item;
+        else if (!isArrivalEntry(entryName)) entries[slot] = item;
       }
     } catch (error) {
       // The lorebook was deleted by hand — a new one is made with the next note.
@@ -1432,7 +2105,7 @@ async function saveEar(chatId, id) {
         method: "POST",
         body: JSON.stringify({
           lorebookId: bookId,
-          name: t("ear_entry", { name: state.names[id] || id }).slice(0, 200),
+          name: t("ear_entry", { name: entryTitle(id) }).slice(0, 200),
           content: text,
           keys: [],
           constant: true,
@@ -1440,7 +2113,7 @@ async function saveEar(chatId, id) {
           depth,
           role: "system",
           characterFilterMode: "include",
-          characterFilterIds: [id],
+          ...entryTarget(id),
         }),
       });
       ear.entries[id] = { id: created.id, content: text, depth };
@@ -1491,7 +2164,12 @@ function feelTargets(id) {
   if (!chat) return [];
   const list = [];
   if (chat.personaId) list.push({ id: USER_TARGET, name: (chat.personaName || "").split(/\s+/)[0] || t("persona") });
-  for (const other of chat.characterIds) if (other !== id) list.push({ id: other, name: shortName(other) });
+  for (const other of chat.slots) {
+    if (other === id) continue;
+    // a card and its own members are one voice — not targets for each other; members of one card are
+    if (cardOf(other) === cardOf(id) && !(isMember(other) && isMember(id))) continue;
+    list.push({ id: other, name: shortName(other) });
+  }
   return list;
 }
 
@@ -1534,150 +2212,95 @@ function levelDiamonds(lv, cls) {
   return box;
 }
 
+// The open character's emotions: 16 buttons, then each chosen one with its intensity and "towards whom".
 function renderFeel() {
-  el.feel.textContent = "";
-  const chat = state.chat;
-  if (!chat) return;
-  for (const id of chat.characterIds) {
-    const list = feel.data[id] || [];
-    const isOpen = feel.open === id;
-    const wrap = document.createElement("div");
-    wrap.className = "kulisy-feel-row" + (isOpen ? " is-open" : "");
+  paintScene();
+  const id = scene.open;
+  const row = id && scene.rows[id];
+  if (!row || !state.chat) return;
+  const box = row.feel;
+  box.textContent = "";
+  const list = feel.data[id] || [];
+  const grid = document.createElement("div");
+  grid.className = "kulisy-feel-grid";
+  for (const def of FEELINGS) {
+    const item = list.find((f) => f.e === def.key);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "kulisy-feel-btn" + (item ? " is-on" : "");
+    button.dataset.e = def.key;
+    button.title = item ? `${feelWord(def.key)} — ${LEVEL_WORD[lang][item.lv]}` : feelWord(def.key);
+    button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-pressed", item ? "true" : "false");
+    const emoji = document.createElement("span");
+    emoji.textContent = def.emoji;
+    const dots = document.createElement("span");
+    dots.className = "kulisy-feel-dots";
+    dots.textContent = item ? LEVEL_DOTS[item.lv] : "";
+    button.append(emoji, dots);
+    button.addEventListener("click", () => clickFeeling(id, def.key));
+    grid.appendChild(button);
+  }
+  box.appendChild(grid);
 
-    const head = document.createElement("button");
-    head.type = "button";
-    head.className = "kulisy-feel-head";
-    head.title = isOpen ? t("feel_fold") : t("feel_unfold");
-    const name = document.createElement("span");
-    name.className = "kulisy-feel-name";
-    name.textContent = state.names[id] || id;
-    const summary = document.createElement("span");
-    summary.className = "kulisy-feel-summary";
-    for (const item of list) {
-      const def = FEELING_BY_KEY[item.e];
-      const chip = document.createElement("span");
-      chip.className = "kulisy-feel-chip";
-      if (isClassic()) {
-        chip.title = feelWord(def.key);
-        chip.textContent = def.emoji + LEVEL_DOTS[item.lv];
-        summary.appendChild(chip);
-        continue;
+  if (list.length) {
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "kulisy-feel-clear";
+    clear.textContent = t("clear_all");
+    clear.addEventListener("click", () => clearFeelings(id));
+    box.appendChild(clear);
+  }
+
+  const targets = feelTargets(id);
+  for (const item of list) {
+    const def = FEELING_BY_KEY[item.e];
+    const itemBox = document.createElement("div");
+    itemBox.className = "kulisy-feel-item";
+    itemBox.dataset.e = def.key;
+    const title = document.createElement("div");
+    title.className = "kulisy-feel-item-title";
+    const word = document.createElement("span");
+    word.textContent = `${def.emoji} ${feelWord(def.key)}`;
+    const level = document.createElement("button");
+    level.type = "button";
+    level.className = "kulisy-feel-level";
+    level.dataset.lv = String(item.lv);
+    level.title = t("feel_level_title");
+    level.textContent = `${LEVEL_TAP[lang][item.lv]} ${LEVEL_DOTS[item.lv]}`;
+    level.addEventListener("click", () => cycleFeelLevel(id, item.e));
+    title.append(word, level);
+    itemBox.appendChild(title);
+    if (targets.length) {
+      const to = document.createElement("div");
+      to.className = "kulisy-feel-to";
+      const label = document.createElement("span");
+      label.className = "kulisy-feel-to-label";
+      label.textContent = t("feel_to");
+      to.appendChild(label);
+      for (const target of targets) {
+        const checkRow = document.createElement("label");
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = item.to.includes(target.id);
+        check.addEventListener("change", () => toggleFeelTarget(id, item.e, target.id, check.checked));
+        const span = document.createElement("span");
+        span.textContent = target.name;
+        checkRow.append(check, span);
+        to.appendChild(checkRow);
       }
-      chip.dataset.e = def.key;
-      chip.dataset.lv = String(item.lv);
-      chip.title = `${feelWord(def.key)} — ${LEVEL_WORD[lang][item.lv]}`;
-      chip.appendChild(feelIcon(def.key, "kulisy-ei is-thin"));
-      summary.appendChild(chip);
+      itemBox.appendChild(to);
     }
-    const arrow = document.createElement("span");
-    arrow.className = "kulisy-feel-arrow";
-    if (isClassic()) arrow.textContent = isOpen ? "▴" : "▾";
-    else arrow.setAttribute("aria-hidden", "true");
-    head.append(name, summary, arrow);
-    head.addEventListener("click", () => {
-      feel.open = isOpen ? null : id;
-      renderFeel();
-    });
-    wrap.appendChild(head);
+    box.appendChild(itemBox);
+  }
 
-    if (isOpen) {
-      const grid = document.createElement("div");
-      grid.className = "kulisy-feel-grid";
-      for (const def of FEELINGS) {
-        const item = list.find((f) => f.e === def.key);
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "kulisy-feel-btn" + (item ? " is-on" : "");
-        button.dataset.e = def.key;
-        button.title = item ? `${feelWord(def.key)} — ${LEVEL_WORD[lang][item.lv]}` : feelWord(def.key);
-        button.setAttribute("aria-label", button.title);
-        button.setAttribute("aria-pressed", item ? "true" : "false");
-        if (isClassic()) {
-          const emoji = document.createElement("span");
-          emoji.textContent = def.emoji;
-          const dots = document.createElement("span");
-          dots.className = "kulisy-feel-dots";
-          dots.textContent = item ? LEVEL_DOTS[item.lv] : "";
-          button.append(emoji, dots);
-        } else {
-          button.append(feelIcon(def.key), levelDiamonds(item ? item.lv : 0, "kulisy-feel-dots"));
-        }
-        button.addEventListener("click", () => clickFeeling(id, def.key));
-        grid.appendChild(button);
-      }
-      wrap.appendChild(grid);
-
-      if (list.length) {
-        const clear = document.createElement("button");
-        clear.type = "button";
-        clear.className = "kulisy-feel-clear";
-        clear.textContent = t("clear_all");
-        clear.addEventListener("click", () => clearFeelings(id));
-        wrap.appendChild(clear);
-      }
-
-      const targets = feelTargets(id);
-      for (const item of list) {
-        const def = FEELING_BY_KEY[item.e];
-        const box = document.createElement("div");
-        box.className = "kulisy-feel-item";
-        box.dataset.e = def.key;
-        const title = document.createElement("div");
-        title.className = "kulisy-feel-item-title";
-        const word = document.createElement("span");
-        if (isClassic()) {
-          word.textContent = `${def.emoji} ${feelWord(def.key)}`;
-        } else {
-          word.className = "kulisy-feel-word";
-          word.append(feelIcon(def.key), document.createTextNode(feelWord(def.key)));
-        }
-        const level = document.createElement("button");
-        level.type = "button";
-        level.className = "kulisy-feel-level";
-        level.dataset.lv = String(item.lv);
-        level.title = t("feel_level_title");
-        if (isClassic()) {
-          level.textContent = `${LEVEL_TAP[lang][item.lv]} ${LEVEL_DOTS[item.lv]}`;
-        } else {
-          level.textContent = LEVEL_TAP[lang][item.lv];
-          level.appendChild(levelDiamonds(item.lv, "kulisy-lv"));
-        }
-        level.addEventListener("click", () => cycleFeelLevel(id, item.e));
-        title.append(word, level);
-        box.appendChild(title);
-        if (targets.length) {
-          const to = document.createElement("div");
-          to.className = "kulisy-feel-to";
-          const label = document.createElement("span");
-          label.className = "kulisy-feel-to-label";
-          label.textContent = t("feel_to");
-          to.appendChild(label);
-          for (const target of targets) {
-            const row = document.createElement("label");
-            const check = document.createElement("input");
-            check.type = "checkbox";
-            check.checked = item.to.includes(target.id);
-            check.addEventListener("change", () => toggleFeelTarget(id, item.e, target.id, check.checked));
-            const span = document.createElement("span");
-            span.textContent = target.name;
-            row.append(check, span);
-            to.appendChild(row);
-          }
-          box.appendChild(to);
-        }
-        wrap.appendChild(box);
-      }
-    }
-
-    const rs = feel.rowState[id];
-    if (rs && rs.text) {
-      const stateEl = document.createElement("div");
-      stateEl.className = "kulisy-ear-state";
-      stateEl.dataset.kind = rs.kind || "";
-      stateEl.textContent = rs.text;
-      wrap.appendChild(stateEl);
-    }
-    el.feel.appendChild(wrap);
+  const rs = feel.rowState[id];
+  if (rs && rs.text) {
+    const stateEl = document.createElement("div");
+    stateEl.className = "kulisy-ear-state";
+    stateEl.dataset.kind = rs.kind || "";
+    stateEl.textContent = rs.text;
+    box.appendChild(stateEl);
   }
 }
 
@@ -1777,6 +2400,8 @@ async function saveFeel(chatId, id, withMeta) {
   try {
     if (withMeta) {
       await api(chatPath(chatId, "/metadata"), { method: "PATCH", body: JSON.stringify({ [FEEL_KEY]: feel.data }) });
+      // tell themes and other extensions at once (e.g. a portrait theme switches the picture): { chatId, feelings }
+      window.dispatchEvent(new CustomEvent("offstage:feelings", { detail: { chatId, feelings: JSON.parse(JSON.stringify(feel.data)) } }));
     }
     if (!text) {
       if (existing && lorebookId) {
@@ -1801,7 +2426,7 @@ async function saveFeel(chatId, id, withMeta) {
           method: "POST",
           body: JSON.stringify({
             lorebookId: bookId,
-            name: t("feel_entry", { name: state.names[id] || id }).slice(0, 200),
+            name: t("feel_entry", { name: entryTitle(id) }).slice(0, 200),
             content: text,
             keys: [],
             constant: true,
@@ -1809,7 +2434,7 @@ async function saveFeel(chatId, id, withMeta) {
             depth,
             role: "system",
             characterFilterMode: "include",
-            characterFilterIds: [id],
+            ...entryTarget(id),
           }),
         });
         feel.entries[id] = { id: created.id, content: text, depth };
@@ -1840,12 +2465,13 @@ async function saveFeel(chatId, id, withMeta) {
 // A personal button beats "Everyone". A short instruction is built from it and stored in the
 // "in their ear" lorebook as "Mode — <name>": constant, include → that character only. It goes
 // into the preset's {{outlet::Offstage}} (or {{outlet::Режим}}) if there is one, else depth 0.
-// Instruction texts are in MODE_TEXTS below. (Russian only: old custom edits from storage
-// "modeTexts", if any, still apply.)
+// Instruction texts are in MODE_TEXTS below; the player's own ones come from the Texts tab (promptOwn). Old custom
+// Russian edits from storage "modeTexts" are taken into the Texts tab's "prompts" (withOldModeTexts).
 
 const MODE_FORMS = [
   { key: "dialog", word: { ru: "Диалог", en: "Dialogue" }, badge: { ru: "диалог", en: "dialogue" } },
   { key: "silent", word: { ru: "Реакция", en: "Reaction" }, badge: { ru: "реакция", en: "reaction" } },
+  { key: "move", word: { ru: "Ход", en: "Move" }, badge: { ru: "ход", en: "move" } },
 ];
 const MODE_LENGTHS = [
   { key: "short", word: { ru: "коротко", en: "short" } },
@@ -1884,6 +2510,8 @@ const MODE_TEXTS = {
       "{имя} говорит развёрнуто: монолог в два-три абзаца — объясняет, рассказывает или спорит. Речь занимает почти весь ответ.",
     silent:
       "Сейчас важна реакция, а не слова. {имя} молчит и отвечает только действием: взгляд, жест, движение, лицо — ни одной реплики.",
+    move:
+      "Сейчас {имя} двигает сцену по своей воле: делает заметный шаг к тому, чего хочет, — решение, поступок или новость, после которых всё идёт иначе. {имя} пишет только свои слова и действия и ничего не решает за других.",
     solo: "Отвечает только {имя}, других персонажей в ответе нет.",
     len_short: "Весь ответ — одна-две фразы, и ход окончен.",
     len_mid: "Весь ответ — один абзац, и ход окончен.",
@@ -1901,6 +2529,8 @@ const MODE_TEXTS = {
       "{name} speaks at length: a monologue of two or three paragraphs, explaining, telling, or arguing. Speech fills almost the whole reply.",
     silent:
       "What matters now is the reaction, not words. {name} stays silent and answers only through action: a look, a gesture, a movement, an expression. No spoken lines at all.",
+    move:
+      "Now {name} moves the scene forward: takes a clear step toward what {name} wants — a decision, an act, or news after which things go differently. {name} writes only their own words and actions and decides nothing for anyone else.",
     solo: "Only {name} responds; no other characters appear in this reply.",
     len_short: "The whole reply is one or two sentences, and the turn ends.",
     len_mid: "The whole reply is a single paragraph, and the turn ends.",
@@ -1913,7 +2543,6 @@ const mode = {
   data: {}, // MODE_ALL | characterId → { f?, l? }
   entries: {}, // characterId → { id, content, depth } — the lorebook entry
   loaded: false, // entries have been read (no writes before that, to avoid duplicates)
-  texts: sanitizeModeTexts(saved.modeTexts), // key → custom Russian text (changed ones only)
   version: 0, // grows on every tap, so a stale chat read never overwrites a newer tap
   queued: false,
   saving: false,
@@ -1921,16 +2550,6 @@ const mode = {
   retries: 0,
   status: { text: "", kind: "" },
 };
-
-function sanitizeModeTexts(raw) {
-  const out = {};
-  if (!raw || typeof raw !== "object") return out;
-  for (const [key, original] of Object.entries(MODE_TEXTS.ru)) {
-    const text = typeof raw[key] === "string" ? raw[key].trim() : "";
-    if (text && text !== original) out[key] = text;
-  }
-  return out;
-}
 
 function sanitizeMode(raw, characterIds) {
   const src = raw && typeof raw === "object" ? raw : {};
@@ -1953,9 +2572,14 @@ function modeUsesAll() {
   return !!state.chat && state.chat.characterIds.length > 1;
 }
 
+// "Everyone" reaches cards, not the people on them: a card's own text already speaks for all of them.
+function modeAllFor(id) {
+  return id !== MODE_ALL && !isMember(id) && modeUsesAll();
+}
+
 // What applies to a character: their own setting, else "Everyone"; "off" = as usual.
 function modeOf(id) {
-  const all = modeUsesAll() ? mode.data[MODE_ALL] || {} : {};
+  const all = modeAllFor(id) ? mode.data[MODE_ALL] || {} : {};
   const own = mode.data[id] || {};
   const f = own.f !== undefined ? own.f : all.f;
   const l = own.l !== undefined ? own.l : all.l;
@@ -1963,7 +2587,7 @@ function modeOf(id) {
 }
 
 function modeTextOf(key) {
-  return (lang === "ru" && mode.texts[key]) || MODE_TEXTS[lang][key];
+  return promptOwn("mode", key, lang) ?? MODE_TEXTS[lang][key];
 }
 
 function modeText(id) {
@@ -1972,7 +2596,7 @@ function modeText(id) {
   if (f === "dialog") {
     parts.push(modeTextOf(l ? `dialog_${l}` : "dialog"));
   } else {
-    if (f === "silent") parts.push(modeTextOf("silent"));
+    if (f === "silent" || f === "move") parts.push(modeTextOf(f));
     else if (l) parts.push(modeTextOf("solo"));
     if (l) parts.push(modeTextOf(f === "silent" && l === "long" ? "silent_long" : `len_${l}`));
   }
@@ -1993,18 +2617,24 @@ function modeWords(m) {
 function modeBadge() {
   const chat = state.chat;
   if (!chat) return "";
-  const list = chat.characterIds.map((id) => ({ id, words: modeWords(modeOf(id)) }));
+  const list = chat.slots.map((id) => ({ id, words: modeWords(modeOf(id)) }));
   const active = list.filter((x) => x.words);
   if (!active.length) return "";
-  if (modeUsesAll() && active.length === list.length && list.every((x) => x.words === list[0].words)) {
-    return t("mode_all_badge", { words: list[0].words });
+  const cards = list.filter((x) => !isMember(x.id));
+  if (
+    modeUsesAll() &&
+    active.length === cards.length &&
+    active.every((x) => !isMember(x.id)) &&
+    cards.every((x) => x.words === cards[0].words)
+  ) {
+    return t("mode_all_badge", { words: cards[0].words });
   }
   return active.map((x) => `${shortName(x.id)}: ${x.words}`).join(" · ");
 }
 
+// A dot on the tab (the curtain button on a phone) while any mode is pressed.
 function paintModeHead() {
   const badge = modeBadge();
-  el.modeBadge.textContent = badge ? `· ${badge}` : "";
   tab.classList.toggle("has-mode", !!badge);
   topBtn.classList.toggle("has-mode", !!badge);
 }
@@ -2024,27 +2654,32 @@ function renderMode() {
   paintModeHead();
   el.modeClear.hidden = !state.chat || Object.keys(mode.data).length === 0;
   const chat = state.chat;
+  el.sceneAll.hidden = !chat || !modeUsesAll();
+  paintScene();
   if (!chat) return;
-  const keys = modeUsesAll() ? [MODE_ALL, ...chat.characterIds] : [...chat.characterIds];
-  for (const key of keys) {
+  if (modeUsesAll()) {
     const row = document.createElement("div");
-    row.className = "kulisy-mode-row" + (key === MODE_ALL ? " is-all" : "");
-    const name = document.createElement("span");
-    name.className = "kulisy-mode-name";
-    name.textContent = key === MODE_ALL ? t("all_label") : state.names[key] || key;
+    row.className = "kulisy-mode-row is-all";
     const buttons = document.createElement("div");
     buttons.className = "kulisy-mode-btns";
-    buttons.append(modeGroup(key, "f", MODE_FORMS), modeGroup(key, "l", MODE_LENGTHS));
-    row.append(name, buttons);
+    buttons.append(modeGroup(MODE_ALL, "f", MODE_FORMS), modeGroup(MODE_ALL, "l", MODE_LENGTHS));
+    row.appendChild(buttons);
     el.mode.appendChild(row);
   }
+  const id = scene.open;
+  const target = id && scene.rows[id];
+  if (!target) return;
+  const buttons = document.createElement("div");
+  buttons.className = "kulisy-mode-btns";
+  buttons.append(modeGroup(id, "f", MODE_FORMS), modeGroup(id, "l", MODE_LENGTHS));
+  target.mode.replaceChildren(buttons);
 }
 
 function modeGroup(key, field, options) {
   const group = document.createElement("div");
   group.className = "kulisy-mode-group";
   const own = (mode.data[key] || {})[field];
-  const all = key !== MODE_ALL && modeUsesAll() ? (mode.data[MODE_ALL] || {})[field] : undefined;
+  const all = modeAllFor(key) ? (mode.data[MODE_ALL] || {})[field] : undefined;
   for (const option of options) {
     const button = document.createElement("button");
     button.type = "button";
@@ -2066,7 +2701,7 @@ function modeGroup(key, field, options) {
 function clickMode(key, field, value) {
   if (!state.chat) return;
   const item = { ...(mode.data[key] || {}) };
-  const all = key !== MODE_ALL && modeUsesAll() ? (mode.data[MODE_ALL] || {})[field] : undefined;
+  const all = modeAllFor(key) ? (mode.data[MODE_ALL] || {})[field] : undefined;
   const own = item[field];
   if (own === value) delete item[field];
   else if (own === undefined && all === value) item[field] = MODE_OFF; // pale (from "Everyone") → as usual for this one
@@ -2113,10 +2748,10 @@ function queueModeSave(withMeta) {
 // (texts may have been edited on another device, a name or the language may have changed).
 function reconcileMode(chatId) {
   if (!state.chat || state.chatId !== chatId) return;
-  const ids = new Set([...state.chat.characterIds, ...Object.keys(mode.entries)]);
+  const ids = new Set([...state.chat.slots, ...Object.keys(mode.entries)]);
   for (const id of ids) {
     const entry = mode.entries[id];
-    const text = state.chat.characterIds.includes(id) ? modeText(id) : "";
+    const text = state.chat.slots.includes(id) ? modeText(id) : "";
     if (!entry && !text) continue;
     if (modeEntryFits(entry, text)) continue;
     queueModeSave(false);
@@ -2137,10 +2772,10 @@ async function saveMode(chatId) {
     if (withMeta) {
       await api(chatPath(chatId, "/metadata"), { method: "PATCH", body: JSON.stringify({ [MODE_KEY]: mode.data }) });
     }
-    const ids = new Set([...state.chat.characterIds, ...Object.keys(mode.entries)]);
+    const ids = new Set([...state.chat.slots, ...Object.keys(mode.entries)]);
     for (const id of ids) {
       if (state.chatId !== chatId) return;
-      const text = state.chat.characterIds.includes(id) ? modeText(id) : "";
+      const text = state.chat.slots.includes(id) ? modeText(id) : "";
       const existing = mode.entries[id];
       const lorebookId = state.chat.earLorebookId;
       if (!text) {
@@ -2166,14 +2801,14 @@ async function saveMode(chatId) {
           method: "POST",
           body: JSON.stringify({
             lorebookId: bookId,
-            name: t("mode_entry", { name: state.names[id] || id }).slice(0, 200),
+            name: t("mode_entry", { name: entryTitle(id) }).slice(0, 200),
             content: text,
             keys: [],
             constant: true,
             ...place,
             role: "system",
             characterFilterMode: "include",
-            characterFilterIds: [id],
+            ...entryTarget(id),
           }),
         });
         mode.entries[id] = { id: created.id, content: text, ...place };
@@ -2200,20 +2835,6 @@ async function saveMode(chatId) {
   }
 }
 
-// ---- instruction texts: old custom edits from storage ----
-
-// Texts may have been edited on another device — re-read when the panel opens.
-async function refreshModeTexts() {
-  try {
-    const fresh = await marinara.storage.get();
-    const texts = sanitizeModeTexts(fresh && fresh.modeTexts);
-    if (JSON.stringify(texts) === JSON.stringify(mode.texts)) return;
-    mode.texts = texts;
-  } catch (error) {
-    marinara.log.warn("Could not re-read mode texts", error);
-  }
-}
-
 // ---- switching the language ----
 // Redraws the panel and rewrites this chat's emotion and mode entries in the new language
 // (other chats follow when they are opened). Free-text "in their ear" notes stay as written.
@@ -2224,6 +2845,7 @@ function setLanguage(next, persist) {
   applyStaticTexts();
   disarmEarClear();
   for (const row of Object.values(ear.rows)) {
+    row.label.textContent = t("sec_ear");
     row.quiet.textContent = t("ear_quiet");
     row.quiet.title = t("ear_quiet_title");
     row.loud.textContent = t("ear_loud");
@@ -2235,10 +2857,12 @@ function setLanguage(next, persist) {
   mode.status = { text: "", kind: "" };
   paintModeStatus();
   setStatus("");
-  renderHere();
+  renderScene();
   renderWho();
-  renderFeel();
-  renderMode();
+  closeFatePop();
+  paintDie();
+  paintFateTexts();
+  scheduleBadges();
   if (persist) {
     marinara.storage.patch({ lang }).catch((error) => marinara.log.warn("Could not save the language", error));
   }
@@ -2256,29 +2880,4549 @@ async function refreshLanguage() {
   try {
     const fresh = await marinara.storage.get();
     if (fresh && LANGS.includes(fresh.lang) && fresh.lang !== lang) setLanguage(fresh.lang, false);
-    if (fresh && LOOKS.includes(fresh.look) && fresh.look !== lookChoice) setLook(fresh.look, false);
+    // the die's options may have been changed on another device
+    const surprise = !!(fresh && fresh.fateSurprise === true);
+    const noDie = !!(fresh && fresh.fateNoDie === true);
+    if (fresh && (surprise !== fate.surprise || noDie !== fate.noDie)) {
+      fate.surprise = surprise;
+      fate.noDie = noDie;
+      ensureDie();
+      renderFatePages();
+    }
+    // developer mode and the player's texts, from another device
+    if (fresh) {
+      const dev = fresh.devMode === true;
+      if (dev !== devMode) {
+        devMode = dev;
+        fel.devOn.checked = dev;
+        paintPages();
+      }
+      const own = sanitizePrompts(withOldModeTexts(fresh.prompts, fresh.modeTexts));
+      if (JSON.stringify(own) !== JSON.stringify(prompts.own)) {
+        prompts.own = own;
+        if (!prompts.open) renderPrompts();
+      }
+    }
   } catch (error) {
     marinara.log.warn("Could not re-read the language", error);
   }
 }
 
-el.lang.addEventListener("click", () => setLanguage(lang === "ru" ? "en" : "ru", true));
+for (const button of el.langs) button.addEventListener("click", () => setLanguage(button.dataset.lang, true));
 el.look.addEventListener("click", () => {
   el.looks.hidden = !el.looks.hidden;
   paintLooks();
 });
-for (const button of el.looks.querySelectorAll("[data-look]")) {
-  button.addEventListener("click", () => setLook(button.dataset.look, true));
-}
-// Auto follows the theme: switched on or off, or another gamut chosen in its menu.
-const themeObserver = new MutationObserver(() => {
-  if (lookChoice === "auto") applyLook();
-});
-themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-cl-gamut"] });
 el.hereClear.addEventListener("click", () => void returnAll());
 el.whoClear.addEventListener("click", clearHearers);
 el.modeClear.addEventListener("click", clearMode);
 el.earClear.addEventListener("click", clickEarClear);
+
+// ---------- fate: an attempt decided by a die ----------
+// A 🎲 button right before Marinara's send button (roleplay input). A tap opens "Who attempts: Me · characters" and
+// "Easy / Normal / Hard" above it; a difficulty rolls a d20. An attempt is { who, what (the text in Marinara's box),
+// difficulty }. The outcome always reaches the model as Marinara's own generation guide (one system line at the very end
+// of the prompt), which Marinara keeps with the reply and gives again on regenerate — a regenerate rewrites the text,
+// never the outcome.
+//   Me: the box is sent as the user's message by Marinara's own send; a fetch wrapper adds the guide to the next
+//       /api/generate request of that chat (at once in the usual order, or in the generation from the character picker
+//       in the Manual group order). The roll goes on the user's message.
+//   A character: nothing of the attempt is posted to the chat. The box becomes Marinara's own command
+//       "/guided respond for <name>: <attempt + outcome>" — that character replies at once, steered by it. The roll goes on
+//       their reply.
+// The roll is kept in the message's extra.kulisy.fate and shown under it like the whisper marker.
+
+const FATE_LEVELS = ["easy", "normal", "hard"];
+// d20: up to "fail" → failure, up to "cost" → success at a cost, above → success
+const FATE_EDGES = { easy: { fail: 5, cost: 10 }, normal: { fail: 7, cost: 13 }, hard: { fail: 11, cost: 16 } };
+const FATE_OUTCOMES = ["success", "cost", "fail"];
+const FATE_TEXT = {
+  ru: {
+    die: "Попытка: бросить кубик",
+    head: "Попытка — насколько трудно?",
+    who: "Кто пытается",
+    me: "Я",
+    how: "Насколько трудно?",
+    easy: "Легко",
+    normal: "Нормально",
+    hard: "Трудно",
+    need_text: "Сначала напиши, что пытаешься сделать.",
+    need_char: "Сначала напиши, что {name} пытается сделать.",
+    note_char: "🎲 {name} · {d} · {r} — {o}",
+    guide_char:
+      "Попытка ({name}): «{a}». Получится или нет — уже решено броском кубика, менять это нельзя: {o} Сыграй именно этот исход — ясно, не смягчая и не переигрывая его. Никого не зови через @ и не пиши «@» в тексте. Кубик и бросок не упоминай.",
+    busy: "Подожди, пока закончится ответ.",
+    armed: "Бросок ждёт ответа: {d} — {o}",
+    cancel: "Отменить бросок",
+    note: "🎲 {d} · {r} — {o}",
+    success: "успех",
+    cost: "успех с ценой",
+    fail: "провал",
+    guide:
+      "Получится ли попытка {{user}} из последней реплики {{user}}, уже решено броском кубика, менять это нельзя: {o} Исход — про то, чего добивается {{user}}: при провале цель в этом ответе не достигнута — ни самой {{user}}, ни кем-то за неё. Начни ответ с того, чем кончилась попытка, — ясно, не смягчая и не переигрывая исход. Покажи его через то, что происходит и что видно вокруг; не пиши за {{user}} ни слов, ни мыслей. Потом — реакция персонажа. Никого не зови через @ и не пиши «@» в тексте. Кубик и бросок не упоминай.",
+    g_success: "УСПЕХ — получается, как задумано.",
+    g_cost: "УСПЕХ С ЦЕНОЙ — получается, но за это приходится заплатить: потерей, риском, осложнением или уступкой.",
+    g_fail: "ПРОВАЛ — не получается, и у неудачи есть последствия.",
+    card: "Судьба",
+    close: "Закрыть",
+    sec_try: "Попытка",
+    what: "Что пробует",
+    what_ph: "Например: незаметно стянуть ключ со стола",
+    what_ph_me: "Как обычный ход: *Оглядываюсь в поисках альбома*",
+    how_roll: "Насколько трудно? — тап бросает кубик",
+    no_input: "Здесь попытку не сделать: нужно поле ввода ролевого чата.",
+    box_busy: "В поле ввода маринары уже есть текст — отправь или сотри его.",
+    armed_secret: "Тайный бросок ждёт ответа",
+    move: "Кулисы: что приложить к ходу",
+    move_try: "Попытка",
+    move_try_sub: "получится ли — решает кубик",
+    move_event: "Событие",
+    move_event_sub: "карта из колоды на ответ",
+    move_event_tone: "карта из колоды · {tone}",
+    move_truth: "Правда или ложь",
+    move_truth_sub: "тайный бросок на ответ",
+    move_whisper: "Шёпот",
+    move_whisper_sub: "слышат только отмеченные",
+    whisper_hear: "Кто слышит",
+    whisper_all: "Что видят все · по желанию",
+    whisper_all_ph: "*наклоняется ближе*",
+    whisper_go: "Шептать",
+    whisper_done: "Готово",
+    whisper_off: "Отменить шёпот",
+    whisper_pick: "Отметь, кто слышит.",
+    whisper_none: "Все ушли — шептать некому.",
+    write_whisper: "Напиши шёпот в поле",
+    chip_whisper: "слышат: {names}",
+    chip_whisper_all: "Все видят: {all}",
+    move_waits: "ждёт ответа",
+    chip_event: "событие",
+    chip_event_tone: "событие: {tone}",
+    chip_event_secret: "тайное событие",
+    chip_truth: "правда или ложь",
+    chip_off: "Убрать",
+    write_me: "Напиши, что пробуешь, и нажми «Отправить».",
+    write_char: "Напиши, что {name} пытается сделать, и нажми «Отправить».",
+    char_gone: "{name} сейчас не здесь — попытку не сделать.",
+    deck_loading: "Колода ещё загружается — попробуй через секунду.",
+    sec_die: "Ход",
+    surprise: "Сюрприз",
+    surprise_hint: "Исход виден только в ответе и в журнале.",
+    nodie: "Убрать кнопку 🎭 у «Отправить»",
+    nodie_hint: "Попытка, событие и правда или ложь — тогда во вкладке «Судьба».",
+    help_try: "Напиши, что пробуешь; кубик бросится при «Отправить».",
+    help_tone: "Какие карты тянуть: мелочь, поворот или встряска.",
+    help_cards: "Модель берёт одну подходящую из вытянутых карт.",
+    help_now: "Событие из колоды или тайно правда / ложь.",
+    help_log: "Тап по тайной записи открывает исход.",
+    deck_now: "На следующий ответ",
+    sec_dev: "Для разработчиков",
+    dev_on: "Режим разработчика: вкладка «Тексты»",
+    dev_on_hint: "Там правятся тексты, которые Кулисы отправляют модели.",
+    dev_page: "Тексты",
+    dev_intro: "Тексты, которые Кулисы отправляют модели. Язык — {lang}, его меняют в ⚙. Изменённые помечены точкой.",
+    dev_lang_ru: "русский",
+    dev_lang_en: "английский",
+    dev_changed: "изменено: {n}",
+    dev_vars: "Вставки — оставь их в тексте:",
+    dev_no_vars: "Вставок нет — текст можно менять целиком.",
+    dev_var_o: "исход броска",
+    dev_var_name: "имя персонажа",
+    dev_var_a: "что персонаж пытается сделать",
+    dev_save: "Сохранить",
+    dev_cancel: "Отменить",
+    dev_reset: "Вернуть исходный",
+    dev_empty: "Пустой текст не сохранить. Исходный — кнопкой «Вернуть исходный».",
+    dev_missing: "Не хватает вставок: {list}. Без них Кулисы не подставят нужное.",
+    dev_updated: "Исходный текст обновился в новой версии Кулис. Твой остаётся; «Вернуть исходный» покажет новый.",
+    dev_save_error: "Не получилось сохранить.",
+    dev_g_try: "Попытка",
+    dev_try_me: "Попытка — твоя",
+    dev_try_char: "Попытка — персонажа",
+    dev_try_success: "Исход: успех",
+    dev_try_cost: "Исход: успех с ценой",
+    dev_try_fail: "Исход: провал",
+    dev_g_deck: "Событие",
+    dev_deck_many: "Из нескольких карт",
+    dev_deck_one: "Одна карта",
+    dev_g_truth: "Правда или ложь",
+    dev_truth_truth: "Выпала правда",
+    dev_truth_lie: "Выпала ложь",
+    dev_var_list: "вытянутые карты",
+    "dev_var_имя": "имя персонажа",
+    dev_var_arrival: "как персонаж появляется — пишет модель",
+    dev_var_when: "когда это было",
+    dev_var_story: "сама история — пишет модель",
+    dev_g_mode: "Режим",
+    dev_mode_hint: "Ответ собирается так: «Начало» + форма + длина.",
+    dev_mode_lead: "Начало — всегда первым",
+    dev_mode_dialog: "Диалог",
+    dev_mode_dialog_short: "Диалог + коротко",
+    dev_mode_dialog_mid: "Диалог + средне",
+    dev_mode_dialog_long: "Диалог + длинно",
+    dev_mode_silent: "Реакция",
+    dev_mode_silent_long: "Реакция + длинно",
+    dev_mode_move: "Ход",
+    dev_mode_solo: "Без формы: отвечает только он",
+    dev_mode_len_short: "Длина: коротко",
+    dev_mode_len_mid: "Длина: средне",
+    dev_mode_len_long: "Длина: длинно",
+    dev_g_away: "За кадром",
+    dev_away_hint: "Меняет только новые истории и появления — записанные остаются как были.",
+    dev_away_secret: "Как играть историю",
+    dev_away_arrive: "Как персонаж входит в сцену",
+    dev_set: "Набор текстов",
+    dev_set_hint: "Все твои правки одним файлом: поделиться с другими, сохранить копию, держать разные наборы под разные модели.",
+    dev_set_save: "Скачать",
+    dev_set_load: "Загрузить",
+    dev_set_empty: "Изменённых текстов нет — скачивать нечего.",
+    dev_set_ask: "В файле текстов: {n}.",
+    dev_set_replace: "Они заменят все твои правки ({m}) — свои можно сначала скачать.",
+    dev_set_skipped: "Пропущено: {n} — незнакомые тексты или без нужных вставок.",
+    dev_set_done: "Загружено текстов: {n}.",
+    dev_set_bad: "Это не набор текстов Кулис.",
+    dev_set_none: "В файле нет текстов, которые можно загрузить.",
+    dev_set_error: "Не получилось загрузить.",
+    deck_more: "ещё ⋯",
+    deck_where_folder_short: "общая для папки «{name}»",
+    deck_where_chat_short: "только этот чат",
+    sec_log: "Журнал бросков",
+    log_empty: "В этом чате бросков ещё не было.",
+    log_secret: "тайный — тап, чтобы открыть",
+    log_was_secret: "был тайным",
+    log_error: "Не получилось прочитать журнал.",
+    sec_deck: "Колода",
+    deck_tone: "Сила событий",
+    tone_any: "Любая",
+    tone_cozy: "Мелочь",
+    tone_tense: "Поворот",
+    tone_danger: "Встряска",
+    deck_draw: "Тянуть карты",
+    deck_count: "{left} из {all}",
+    deck_group_count: "{left} из {all}",
+    deck_none: "Карт пока нет",
+    deck_edit: "Изменить ›",
+    deck_cards: "Карты колоды",
+    deck_armed: "Ждут ответа: {list}",
+    deck_armed_one: "Ждёт ответа: {list}",
+    deck_armed_secret: "Тайные карты ждут ответа",
+    deck_cancel: "Отменить",
+    deck_already: "Карты уже ждут ответа.",
+    deck_empty: "В колоде нет карт — напиши первые во вкладке «Судьба».",
+    deck_spent: "Все карты сыграны — «Судьба» → «ещё ⋯» → «Перетасовать».",
+    deck_no_tone: "Карт «{tone}» не осталось.",
+    deck_list_empty: "Колода пуста. Карта — событие, которое может случиться в сцене.",
+    deck_new_ph: "Например: начался дождь",
+    deck_add: "Добавить",
+    deck_new_card: "+ Новая карта",
+    deck_group_none: "пусто",
+    deck_save: "Сохранить",
+    deck_delete: "Удалить",
+    deck_delete_sure: "Точно удалить?",
+    deck_used: "Сыграна",
+    deck_shuffle: "Перетасовать",
+    deck_bulk: "Вставить списком",
+    deck_clear_all: "Убрать все карты",
+    deck_clear_sure: "Точно убрать все?",
+    deck_undo: "Вернуть",
+    deck_undo_text: "Убрано карт: {n}.",
+    sec_truth: "Правда или ложь",
+    truth_roll: "Бросить на следующий ответ",
+    truth_hint:
+      "Ответ на твой следующий вопрос будет правдой или ложью — решает тайный бросок. Что выпало — в журнале, по тапу.",
+    truth_armed: "Тайный бросок ждёт ответа",
+    truth_already: "Бросок уже ждёт ответа.",
+    log_truth: "Правда или ложь",
+    truth_truth: "правда",
+    truth_lie: "ложь",
+    truth_guide_truth:
+      "Правда или ложь: исход уже решён тайным броском, менять его нельзя. Если в этом ответе персонаж отвечает на вопрос {{user}} или говорит о том, о чём его спросили, — он отвечает правду: честно и по существу говорит, как есть на самом деле (насколько сам знает), даже если ему не хочется это раскрывать. Не подчёркивай, что это правда. Не пиши за {{user}} ни слов, ни мыслей. Никого не зови через @ и не пиши «@» в тексте. Не упоминай броски и проверки.",
+    truth_guide_lie:
+      "Правда или ложь: исход уже решён тайным броском, менять его нельзя. Если в этом ответе персонаж отвечает на вопрос {{user}} или говорит о том, о чём его спросили, — он лжёт: уверенно и правдоподобно, ложь звучит естественно. Не выдавай ложь ни мыслями персонажа, ни описанием (взгляд, голос, руки), ни намёками рассказчика: по тексту ответа нельзя понять, что это ложь. Не пиши за {{user}} ни слов, ни мыслей. Никого не зови через @ и не пиши «@» в тексте. Не упоминай броски и проверки.",
+    deck_bulk_hint:
+      "Одна строка — одна карта. Строка «Мелочь:», «Поворот:» или «Встряска:» задаёт силу карт под ней; без неё — мелочь. Можно попросить ИИ: «Напиши 30 событий для моей сцены [где и что происходит]: по 10 под заголовками Мелочь:, Поворот:, Встряска:, одно событие — одна короткая строка».",
+    deck_bulk_ph: "Мелочь:\nНачался дождь\nКот уронил вазу\nПоворот:\nПришло письмо",
+    deck_bulk_add: "Добавить все",
+    deck_bulk_done: "Добавлено карт: {n}.",
+    deck_bulk_dupes: "Уже были в колоде: {n}.",
+    deck_bulk_full: "Не поместилось: {n} — в колоде до {max} карт.",
+    deck_bulk_none: "Не нашёл ни одной карты: одна строка — одна карта.",
+    deck_save_error: "Не получилось сохранить колоду.",
+    deck_where_folder: "Общая для всех сцен папки «{name}».",
+    deck_where_chat: "Только для этого чата: он не в папке. Чаты одной папки тянут из общей колоды.",
+    deck_guide_many:
+      "Колода событий: в этом ответе в сцене должно случиться ровно одно новое событие. Выбери из вариантов одно — то, что уместнее всего сейчас: {list}. Введи его естественно, через то, что происходит в сцене, и дай персонажу на него отреагировать. Остальные варианты в этом ответе не случаются: не вводи их, не упоминай и не намекай на них. Не пиши за {{user}} ни слов, ни мыслей. Никого не зови через @ и не пиши «@» в тексте. Не упоминай колоду, карты и выбор.",
+    deck_guide_one:
+      "Колода событий: в этом ответе в сцене случается событие — {list}. Введи его естественно, через то, что происходит в сцене, и дай персонажу на него отреагировать. Не пиши за {{user}} ни слов, ни мыслей. Никого не зови через @ и не пиши «@» в тексте. Не упоминай колоду и карты.",
+    deck_auto: "Тянет сама",
+    auto_off: "Выкл",
+    auto_rare: "Редко",
+    auto_some: "Иногда",
+    auto_often: "Часто",
+    deck_auto_hint: "Тайная карта раз в 10–15 / 6–10 / 3–6 твоих реплик.",
+    deck_auto_dry: "Сейчас подходящих карт нет — колода ждёт.",
+    log_deck: "Колода",
+    log_deck_auto: "Колода · сама",
+    log_deck_secret: "тайные карты — тап, чтобы открыть",
+    log_deck_from: "из: {list}",
+    log_deck_unknown: "какая сыграна — не понял",
+    sec_secrets: "Жизнь за кадром",
+    secret_who: "С кем",
+    secret_len: "Сколько его не было",
+    secret_len_start: "Когда это было",
+    secret_kind: "Что случилось",
+    secret_size: "Сила",
+    secret_any: "Наугад",
+    secret_size_deck: "Как в колоде",
+    secret_about: "Намёк (по желанию)",
+    secret_about_ph: "например: ездила в Лондон к сестре",
+    secret_arrival: "Приход:",
+    sl_hours: "Несколько часов",
+    sl_day: "День",
+    sl_week: "Неделя и больше",
+    sl_recent: "Недавно",
+    sl_long: "Давно",
+    secret_go: "Что с ним было?",
+    secret_ask: "Узнать",
+    secrets_label: "Тайны",
+    secret_busy: "Пишу историю…",
+    secret_pick: "Выбери, с кем.",
+    secret_pick_len: "Выбери, сколько его не было.",
+    secret_pick_start: "Выбери, когда это было.",
+    secret_no_conn: "у чата не выбрано подключение к модели",
+    secret_empty: "модель ничего не написала, попробуй ещё раз",
+    secret_failed: "Не получилось: {err}",
+    secret_save_error: "Не получилось сохранить конверты.",
+    secret_done: "Готово: конверт запечатан.",
+    secret_none: "Конвертов пока нет.",
+    secret_sealed: "запечатан — тап, чтобы прочитать",
+    secret_closed: "тап — прочитать",
+    secret_read: "тап — свернуть",
+    secret_forget: "Забыть",
+    secret_forget_sure: "Точно забыть?",
+    secret_over: "{name}: тайн больше {n} — старые можно забыть.",
+    secret_forget_old: "Забыть самую старую",
+    secret_offer: "{name}: что с ним было? ›",
+    secret_hint:
+      "Что случилось с персонажем, пока его не видели: он это помнит, а ты — нет, пока не откроешь конверт. «Наугад» — вид решает тайный бросок, «Как в колоде» — «Сила событий» колоды. Если персонаж только входит в сцену (добавлен в чат или вернулся), модель допишет, как он сюда попал. Конверты общие для всех сцен папки.",
+    secret_book: "Тайны — {name}",
+    secret_book_bare: "Тайны",
+    secret_book_desc:
+      "Кулисы: что случилось с персонажами за кадром. Общий для всех чатов игры (папки); статью видит только её персонаж. Забывать — в Кулисах: «Судьба» → «Жизнь за кадром».",
+    secret_entry_name: "Тайна — {name} · {date}",
+    sk_good: "хорошее",
+    sk_bad: "плохое",
+    sk_meet: "встреча",
+    sk_secret: "тайна",
+    sg_good: "что-то хорошее для него: удача, подарок, успех, радость",
+    sg_bad: "что-то плохое для него: потеря, рана, ссора, неудача",
+    sg_meet:
+      "встреча: он с кем-то познакомился — с новым человеком, которого нет ни в сцене, ни в карточке, — или неожиданно встретил кого-то из своего прошлого",
+    sg_secret: "тайна: он узнал, сделал или получил что-то, что предпочёл бы скрыть",
+    ss_cozy: "мелочь — небольшое, повседневное: про настроение и детали",
+    ss_tense: "поворот — заметное событие, которое что-то для него меняет",
+    ss_danger: "встряска — серьёзное событие, которое выбивает его из колеи",
+    sw_hours: "за последние несколько часов",
+    sw_day: "за последний день",
+    sw_week: "за последнюю неделю или дольше",
+    sw_recent: "незадолго до начала истории",
+    sw_long: "давно, задолго до начала истории",
+    sp_system:
+      "Ты пишешь закулисье ролевой игры: что случилось с персонажем {name} {when}, пока игрок ({user}) этого не видел. Вид события: {kind}. Размах: {size}. Только его личное — знакомства, вещи, раны, тайны, настроение, планы. Не решай дела игрока и других персонажей, не двигай общий сюжет, не противоречь карточке и сцене. Сцена дана только как фон: её события, предметы и чужие тайны — не материал для истории; история — о его жизни вне сцены и заканчивается до того, что в сцене происходит. {length}, третье лицо, прошедшее время, без прямой речи, без вступлений, заголовков и пояснений. Пиши на языке сцены.",
+    sp_card: "Карточка — {name}",
+    sp_personality: "Характер",
+    sp_scenario: "Сценарий",
+    sp_member: "Речь об одном человеке из этой карточки — {name}.",
+    sp_summary: "Что было раньше (краткий пересказ)",
+    sp_scene: "Последние сообщения сцены",
+    sp_missed: "Пока {name} не было, в сцене прошло ещё сообщений: {n}. Что в них — {name} не знает, и в этой истории их нет.",
+    sp_absent: "{name} в этих сообщениях не участвовал(а) и мог(ла) их не видеть: не опирайся на то, что в них случилось.",
+    sp_away: "Сейчас {name} в сцене нет.",
+    sp_narrator: "Рассказчик",
+    sp_player: "игрок",
+    sp_ask: "Напиши, что случилось с персонажем {name} {when}.",
+    sp_hint: "Игрок подсказал, о чём эта история: «{hint}». Построй её вокруг этого.",
+    sp_arrive:
+      "После истории — отдельная строка «---», а под ней 1–2 предложения: как {name} сейчас приходит туда, где идёт сцена (место — из последних сообщений), по своей причине — из этой истории или из своих дел. Что там происходит, {name} ещё не знает: приход — не ответ на события сцены.",
+    sn_cozy: "1–2 предложения",
+    sn_tense: "2–3 предложения",
+    sn_danger: "3–5 предложений",
+    arrive_entry_name: "Приход — {name}",
+    arrive_entry:
+      "Как {name} оказывается в этой сцене: {arrival}\nЧто здесь происходило, пока персонажа не было, ему неизвестно — только то, что видно сейчас.",
+    secret_entry:
+      "Закулисье — {name} ({when}); {{user}} об этом не знает:\n{story}\n\nКак с этим играть: это настоящая память персонажа, другой версии нет. Видимые следы (рана, новая вещь, усталость) видны сразу. О самом случившемся персонаж не заговаривает первым и не выкладывает всё сразу — только когда к месту. Если спросят — отвечает от этой истории, в своём характере: может рассказать, недоговорить или уйти от ответа, но не придумывает другую. Не упоминай кубики и броски.",
+  },
+  en: {
+    die: "Attempt: roll the die",
+    head: "Attempt — how hard?",
+    who: "Who attempts",
+    me: "Me",
+    how: "How hard?",
+    easy: "Easy",
+    normal: "Normal",
+    hard: "Hard",
+    need_text: "First write what you are trying to do.",
+    need_char: "First write what {name} is trying to do.",
+    note_char: "🎲 {name} · {d} · {r} — {o}",
+    guide_char:
+      "Attempt ({name}): “{a}”. Whether it comes off is already decided by a die roll and cannot change: {o} Play exactly this outcome — clearly, without softening or overturning it. Don't call anyone with @ and don't write “@” in the text. Don't mention the die or the roll.",
+    busy: "Wait until the reply is finished.",
+    armed: "The roll waits for a reply: {d} — {o}",
+    cancel: "Cancel the roll",
+    note: "🎲 {d} · {r} — {o}",
+    success: "success",
+    cost: "success at a cost",
+    fail: "failure",
+    guide:
+      "Whether {{user}}'s attempt in {{user}}'s last message comes off is already decided by a die roll and cannot change: {o} The outcome is about what {{user}} is after: on a failure the goal is not reached in this reply — neither by {{user}} nor by anyone else for {{user}}. Open the reply with how the attempt ended — clearly, without softening or overturning the outcome. Show it through what happens and what can be seen around; don't write {{user}}'s words or thoughts. Then the character's reaction. Don't call anyone with @ and don't write “@” in the text. Don't mention the die or the roll.",
+    g_success: "SUCCESS — it works as intended.",
+    g_cost: "SUCCESS AT A COST — it works, but there is a price: a loss, a risk, a complication or a concession.",
+    g_fail: "FAILURE — it doesn't work, and the failure has consequences.",
+    card: "Fate",
+    close: "Close",
+    sec_try: "Attempt",
+    what: "What is attempted",
+    what_ph: "E.g. slip the key off the desk unseen",
+    what_ph_me: "As a normal turn: *I look around for my sketchbook*",
+    how_roll: "How hard? — a tap rolls the die",
+    no_input: "No attempt here: it needs a roleplay chat's message box.",
+    box_busy: "Marinara's message box already has text — send or clear it first.",
+    armed_secret: "A secret roll waits for a reply",
+    move: "Offstage: add to this turn",
+    move_try: "Attempt",
+    move_try_sub: "will it work — the die decides",
+    move_event: "Event",
+    move_event_sub: "a card from the deck for the reply",
+    move_event_tone: "a deck card · {tone}",
+    move_truth: "Truth or lie",
+    move_truth_sub: "a secret roll for the reply",
+    move_whisper: "Whisper",
+    move_whisper_sub: "only the checked hear it",
+    whisper_hear: "Who hears",
+    whisper_all: "What everyone sees · optional",
+    whisper_all_ph: "*leans in close*",
+    whisper_go: "Whisper",
+    whisper_done: "Done",
+    whisper_off: "Cancel the whisper",
+    whisper_pick: "Check who hears.",
+    whisper_none: "Everyone is away — no one to whisper to.",
+    write_whisper: "Write the whisper in the box",
+    chip_whisper: "heard by: {names}",
+    chip_whisper_all: "Everyone sees: {all}",
+    move_waits: "waits for the reply",
+    chip_event: "event",
+    chip_event_tone: "event: {tone}",
+    chip_event_secret: "secret event",
+    chip_truth: "truth or lie",
+    chip_off: "Remove",
+    write_me: "Write what you try, then press Send.",
+    write_char: "Write what {name} tries to do, then press Send.",
+    char_gone: "{name} is not here now — no attempt.",
+    deck_loading: "The deck is still loading — try again in a second.",
+    sec_die: "Turn",
+    surprise: "Surprise",
+    surprise_hint: "The outcome shows only in the reply and the log.",
+    nodie: "Hide the 🎭 button by “Send”",
+    nodie_hint: "Attempts, events and truth or lie are then in the Fate tab.",
+    help_try: "Write what you try; the die is rolled when you press Send.",
+    help_tone: "Which cards to draw: minor, twist or shake-up.",
+    help_cards: "The model picks one fitting card of those drawn.",
+    help_now: "An event from the deck, or a secret truth or lie.",
+    help_log: "Tap a secret entry to reveal it.",
+    deck_now: "For the next reply",
+    sec_dev: "For developers",
+    dev_on: "Developer mode: the Texts tab",
+    dev_on_hint: "There you can edit the texts Offstage sends to the model.",
+    dev_page: "Texts",
+    dev_intro: "The texts Offstage sends to the model. Language: {lang}, changed in ⚙. Edited ones carry a dot.",
+    dev_lang_ru: "Russian",
+    dev_lang_en: "English",
+    dev_changed: "edited: {n}",
+    dev_vars: "Slots — keep them in the text:",
+    dev_no_vars: "No slots — the text can change entirely.",
+    dev_var_o: "the roll's outcome",
+    dev_var_name: "the character's name",
+    dev_var_a: "what the character attempts",
+    dev_save: "Save",
+    dev_cancel: "Cancel",
+    dev_reset: "Restore the original",
+    dev_empty: "An empty text can't be saved. For the original, tap “Restore the original”.",
+    dev_missing: "Missing slots: {list}. Without them Offstage can't fill in what's needed.",
+    dev_updated: "The original text changed in a newer Offstage. Yours stays; “Restore the original” shows the new one.",
+    dev_save_error: "Could not save.",
+    dev_g_try: "Attempt",
+    dev_try_me: "Attempt — yours",
+    dev_try_char: "Attempt — a character's",
+    dev_try_success: "Outcome: success",
+    dev_try_cost: "Outcome: success at a cost",
+    dev_try_fail: "Outcome: failure",
+    dev_g_deck: "Event",
+    dev_deck_many: "From several cards",
+    dev_deck_one: "One card",
+    dev_g_truth: "Truth or lie",
+    dev_truth_truth: "Rolled the truth",
+    dev_truth_lie: "Rolled a lie",
+    dev_var_list: "the drawn cards",
+    dev_var_arrival: "how the character comes in — written by the model",
+    dev_var_when: "when it happened",
+    dev_var_story: "the story itself — written by the model",
+    dev_g_mode: "Mode",
+    dev_mode_hint: "A reply is built as: “Start” + form + length.",
+    dev_mode_lead: "Start — always first",
+    dev_mode_dialog: "Dialogue",
+    dev_mode_dialog_short: "Dialogue + short",
+    dev_mode_dialog_mid: "Dialogue + medium",
+    dev_mode_dialog_long: "Dialogue + long",
+    dev_mode_silent: "Reaction",
+    dev_mode_silent_long: "Reaction + long",
+    dev_mode_move: "Move",
+    dev_mode_solo: "No form: only they reply",
+    dev_mode_len_short: "Length: short",
+    dev_mode_len_mid: "Length: medium",
+    dev_mode_len_long: "Length: long",
+    dev_g_away: "Offscreen",
+    dev_away_hint: "Changes only new stories and arrivals — the ones already written stay as they were.",
+    dev_away_secret: "How to play the story",
+    dev_away_arrive: "How the character enters the scene",
+    dev_set: "Text set",
+    dev_set_hint: "All your edits in one file: share them, keep a copy, keep different sets for different models.",
+    dev_set_save: "Download",
+    dev_set_load: "Upload",
+    dev_set_empty: "No edited texts — nothing to download.",
+    dev_set_ask: "Texts in the file: {n}.",
+    dev_set_replace: "They replace all your edits ({m}) — you can download yours first.",
+    dev_set_skipped: "Skipped: {n} — unknown texts or missing slots.",
+    dev_set_done: "Texts uploaded: {n}.",
+    dev_set_bad: "This is not an Offstage text set.",
+    dev_set_none: "The file has no texts that can be uploaded.",
+    dev_set_error: "Could not upload.",
+    deck_more: "more ⋯",
+    deck_where_folder_short: "shared by the “{name}” folder",
+    deck_where_chat_short: "this chat only",
+    sec_log: "Roll log",
+    log_empty: "No rolls in this chat yet.",
+    log_secret: "secret — tap to reveal",
+    log_was_secret: "was secret",
+    log_error: "Could not read the log.",
+    sec_deck: "Deck",
+    deck_tone: "Event size",
+    tone_any: "Any",
+    tone_cozy: "Minor",
+    tone_tense: "Twist",
+    tone_danger: "Shake-up",
+    deck_draw: "Draw cards",
+    deck_count: "{left} of {all}",
+    deck_group_count: "{left} of {all}",
+    deck_none: "No cards yet",
+    deck_edit: "Edit ›",
+    deck_cards: "Deck cards",
+    deck_armed: "Waiting for a reply: {list}",
+    deck_armed_one: "Waiting for a reply: {list}",
+    deck_armed_secret: "Secret cards wait for a reply",
+    deck_cancel: "Cancel",
+    deck_already: "Cards already wait for a reply.",
+    deck_empty: "The deck has no cards — write the first ones in the Fate tab.",
+    deck_spent: "Every card has been played — “Fate” → “more ⋯” → “Shuffle”.",
+    deck_no_tone: "No “{tone}” cards left.",
+    deck_list_empty: "The deck is empty. A card is an event that may happen in the scene.",
+    deck_new_ph: "E.g. it starts to rain",
+    deck_add: "Add",
+    deck_new_card: "+ New card",
+    deck_group_none: "empty",
+    deck_save: "Save",
+    deck_delete: "Delete",
+    deck_delete_sure: "Delete for sure?",
+    deck_used: "Played",
+    deck_shuffle: "Shuffle",
+    deck_bulk: "Paste a list",
+    deck_clear_all: "Remove all cards",
+    deck_clear_sure: "Remove all for sure?",
+    deck_undo: "Bring back",
+    deck_undo_text: "Cards removed: {n}.",
+    sec_truth: "Truth or lie",
+    truth_roll: "Roll for the next reply",
+    truth_hint:
+      "The answer to your next question will be the truth or a lie — a secret roll decides. Tap its line in the log to see which.",
+    truth_armed: "A secret roll waits for the reply",
+    truth_already: "A roll is already waiting for the reply.",
+    log_truth: "Truth or lie",
+    truth_truth: "the truth",
+    truth_lie: "a lie",
+    truth_guide_truth:
+      "Truth or lie: the outcome is already decided by a secret roll and can't be changed. If in this reply the character answers {{user}}'s question or speaks about what they were asked, they tell the truth: honestly and to the point, how things really are (as far as they know), even if they would rather keep it hidden. Don't stress that it is the truth. Don't write {{user}}'s words or thoughts. Don't call anyone with @ and don't write “@” in the text. Don't mention rolls or checks.",
+    truth_guide_lie:
+      "Truth or lie: the outcome is already decided by a secret roll and can't be changed. If in this reply the character answers {{user}}'s question or speaks about what they were asked, they lie: confidently and plausibly, the lie sounds natural. Don't give the lie away through the character's thoughts, the description (eyes, voice, hands) or the narrator's hints: nothing in the reply may show that it is a lie. Don't write {{user}}'s words or thoughts. Don't call anyone with @ and don't write “@” in the text. Don't mention rolls or checks.",
+    deck_bulk_hint:
+      "One line — one card. A line “Minor:”, “Twist:” or “Shake-up:” sets the size of the cards under it; without one — minor. You can ask an AI: “Write 30 events for my scene [where, what is going on]: 10 under each heading Minor:, Twist:, Shake-up:, one short line per event.”",
+    deck_bulk_ph: "Minor:\nIt starts to rain\nThe cat knocks over a vase\nTwist:\nA letter arrives",
+    deck_bulk_add: "Add all",
+    deck_bulk_done: "Cards added: {n}.",
+    deck_bulk_dupes: "Already in the deck: {n}.",
+    deck_bulk_full: "Didn't fit: {n} — a deck holds up to {max} cards.",
+    deck_bulk_none: "No cards found: one line — one card.",
+    deck_save_error: "Could not save the deck.",
+    deck_where_folder: "Shared by every scene in the “{name}” folder.",
+    deck_where_chat: "For this chat only: it is not in a folder. Chats of one folder draw from a shared deck.",
+    deck_guide_many:
+      "Event deck: exactly one new event must happen in the scene in this reply. Pick one option — the one that fits best right now: {list}. Bring it in naturally, through what is happening in the scene, and let the character react to it. The other options don't happen in this reply: don't bring them in, mention them or hint at them. Don't write {{user}}'s words or thoughts. Don't call anyone with @ and don't write “@” in the text. Don't mention the deck, the cards or the choice.",
+    deck_guide_one:
+      "Event deck: an event happens in the scene in this reply — {list}. Bring it in naturally, through what is happening in the scene, and let the character react to it. Don't write {{user}}'s words or thoughts. Don't call anyone with @ and don't write “@” in the text. Don't mention the deck or the cards.",
+    deck_auto: "Draws by itself",
+    auto_off: "Off",
+    auto_rare: "Rarely",
+    auto_some: "Sometimes",
+    auto_often: "Often",
+    deck_auto_hint: "A secret card every 10–15 / 6–10 / 3–6 of your turns.",
+    deck_auto_dry: "No card fits right now — the deck waits.",
+    log_deck: "Deck",
+    log_deck_auto: "Deck · by itself",
+    log_deck_secret: "secret cards — tap to reveal",
+    log_deck_from: "from: {list}",
+    log_deck_unknown: "couldn't tell which was played",
+    sec_secrets: "Life off-screen",
+    secret_who: "Who",
+    secret_len: "How long they were away",
+    secret_len_start: "When it was",
+    secret_kind: "What happened",
+    secret_size: "Size",
+    secret_any: "Random",
+    secret_size_deck: "As the deck",
+    secret_about: "A hint (optional)",
+    secret_about_ph: "e.g. went to London to see her sister",
+    secret_arrival: "Arrival:",
+    sl_hours: "A few hours",
+    sl_day: "A day",
+    sl_week: "A week or more",
+    sl_recent: "Recently",
+    sl_long: "Long ago",
+    secret_go: "What happened to them?",
+    secret_ask: "Find out",
+    secrets_label: "Secrets",
+    secret_busy: "Writing the story…",
+    secret_pick: "Pick who.",
+    secret_pick_len: "Pick how long they were away.",
+    secret_pick_start: "Pick when it was.",
+    secret_no_conn: "the chat has no model connection",
+    secret_empty: "the model wrote nothing, try again",
+    secret_failed: "Didn't work: {err}",
+    secret_save_error: "Could not save the envelopes.",
+    secret_done: "Done: the envelope is sealed.",
+    secret_none: "No envelopes yet.",
+    secret_sealed: "sealed — tap to read",
+    secret_closed: "tap to read",
+    secret_read: "tap to fold",
+    secret_forget: "Forget",
+    secret_forget_sure: "Forget for sure?",
+    secret_over: "{name}: more than {n} secrets — old ones can be forgotten.",
+    secret_forget_old: "Forget the oldest",
+    secret_offer: "{name}: what happened to them? ›",
+    secret_hint:
+      "What happened to a character while nobody saw: they remember it, you don't — until you open the envelope. “Random” — the kind is a secret roll, “As the deck” — the deck's “Event size”. If the character is just entering the scene (added to the chat or back), the model also writes how they got here. Envelopes are shared by every scene in the folder.",
+    secret_book: "Secrets — {name}",
+    secret_book_bare: "Secrets",
+    secret_book_desc:
+      "Offstage: what happened to the characters off-screen. Shared by every chat of the game (folder); each entry reaches only its own character. Forget them in Offstage: “Fate” → “Life off-screen”.",
+    secret_entry_name: "Secret — {name} · {date}",
+    sk_good: "good",
+    sk_bad: "bad",
+    sk_meet: "a meeting",
+    sk_secret: "a secret",
+    sg_good: "something good for them: luck, a gift, a success, a joy",
+    sg_bad: "something bad for them: a loss, a wound, a quarrel, a failure",
+    sg_meet:
+      "a meeting: they got to know someone — a new person who is neither in the scene nor on the card — or unexpectedly met someone from their past",
+    sg_secret: "a secret: they learned, did or got something they would rather hide",
+    ss_cozy: "minor — something small and everyday: about mood and details",
+    ss_tense: "a twist — a noticeable event that changes something for them",
+    ss_danger: "a shake-up — a serious event that throws them off balance",
+    sw_hours: "over the last few hours",
+    sw_day: "over the last day",
+    sw_week: "over the last week or longer",
+    sw_recent: "shortly before the story began",
+    sw_long: "long ago, well before the story began",
+    sp_system:
+      "You write the backstage of a roleplay: what happened to the character {name} {when}, while the player ({user}) didn't see it. Kind of event: {kind}. Size: {size}. Only their own life — acquaintances, things, wounds, secrets, mood, plans. Don't decide anything for the player or other characters, don't move the main plot, don't contradict the card or the scene. The scene is given as background only: its events, objects and other people's secrets are not material for the story; the story is about their life away from the scene and ends before what happens in it. {length}, third person, past tense, no direct speech, no intro, headings or explanations. Write in the language of the scene.",
+    sp_card: "Card — {name}",
+    sp_personality: "Personality",
+    sp_scenario: "Scenario",
+    sp_member: "This is about one person on this card — {name}.",
+    sp_summary: "Earlier (a short summary)",
+    sp_scene: "The scene's last messages",
+    sp_missed: "While {name} was away, more messages passed in the scene: {n}. {name} doesn't know what was in them, and they are not part of this story.",
+    sp_absent: "{name} took no part in these messages and may not have seen them: don't build on what happened in them.",
+    sp_away: "{name} is not in the scene right now.",
+    sp_narrator: "Narrator",
+    sp_player: "the player",
+    sp_ask: "Write what happened to the character {name} {when}.",
+    sp_hint: "The player hinted what this story is about: “{hint}”. Build it around that.",
+    sp_arrive:
+      "After the story — a separate line “---”, and under it 1–2 sentences: how {name} now comes to where the scene is (the place — from the last messages), for a reason of their own — from this story or their own business. {name} doesn't know yet what is going on there: the arrival is not a response to the scene's events.",
+    sn_cozy: "1–2 sentences",
+    sn_tense: "2–3 sentences",
+    sn_danger: "3–5 sentences",
+    arrive_entry_name: "Arrival — {name}",
+    arrive_entry:
+      "How {name} comes into this scene: {arrival}\nWhat went on here while the character was away, they don't know — only what can be seen now.",
+    secret_entry:
+      "Backstage — {name} ({when}); {{user}} doesn't know about it:\n{story}\n\nHow to play it: this is the character's real memory, there is no other version. Visible traces (a wound, a new thing, tiredness) show at once. The character doesn't bring it up first or tell it all at once — only when it fits. If asked, they answer from this story, in character: they may tell it, leave things out or dodge, but never make up another. Don't mention dice or rolls.",
+  },
+};
+// ---------- developer mode (0.9.27, Leah 20.10): the texts Offstage sends to the model, editable ----------
+// The player's own texts live in Offstage's storage "prompts" = { ru: { "fate:guide": { t, b } }, en: {…} }: t — the
+// player's text, b — the built-in text it was written over (a newer built-in text shows "the original changed").
+// A text missing a slot ({o}, {name}…) of its built-in one is never used. Edited in the Texts tab (renderPrompts).
+const PROMPT_SOURCES = { fate: FATE_TEXT, mode: MODE_TEXTS };
+const PROMPT_GROUPS = [
+  {
+    key: "try",
+    title: "dev_g_try",
+    items: [
+      { src: "fate", key: "guide", name: "dev_try_me" },
+      { src: "fate", key: "guide_char", name: "dev_try_char" },
+      { src: "fate", key: "g_success", name: "dev_try_success" },
+      { src: "fate", key: "g_cost", name: "dev_try_cost" },
+      { src: "fate", key: "g_fail", name: "dev_try_fail" },
+    ],
+  },
+  {
+    key: "deck",
+    title: "dev_g_deck",
+    items: [
+      { src: "fate", key: "deck_guide_many", name: "dev_deck_many" },
+      { src: "fate", key: "deck_guide_one", name: "dev_deck_one" },
+    ],
+  },
+  {
+    key: "truth",
+    title: "dev_g_truth",
+    items: [
+      { src: "fate", key: "truth_guide_truth", name: "dev_truth_truth" },
+      { src: "fate", key: "truth_guide_lie", name: "dev_truth_lie" },
+    ],
+  },
+  {
+    key: "mode",
+    title: "dev_g_mode",
+    hint: "dev_mode_hint",
+    items: [
+      { src: "mode", key: "lead", name: "dev_mode_lead" },
+      { src: "mode", key: "dialog", name: "dev_mode_dialog" },
+      { src: "mode", key: "dialog_short", name: "dev_mode_dialog_short" },
+      { src: "mode", key: "dialog_mid", name: "dev_mode_dialog_mid" },
+      { src: "mode", key: "dialog_long", name: "dev_mode_dialog_long" },
+      { src: "mode", key: "silent", name: "dev_mode_silent" },
+      { src: "mode", key: "silent_long", name: "dev_mode_silent_long" },
+      { src: "mode", key: "move", name: "dev_mode_move" },
+      { src: "mode", key: "solo", name: "dev_mode_solo" },
+      { src: "mode", key: "len_short", name: "dev_mode_len_short" },
+      { src: "mode", key: "len_mid", name: "dev_mode_len_mid" },
+      { src: "mode", key: "len_long", name: "dev_mode_len_long" },
+    ],
+  },
+  {
+    key: "away",
+    title: "dev_g_away",
+    hint: "dev_away_hint",
+    items: [
+      { src: "fate", key: "secret_entry", name: "dev_away_secret" },
+      { src: "fate", key: "arrive_entry", name: "dev_away_arrive" },
+    ],
+  },
+];
+function promptId(item) {
+  return `${item.src}:${item.key}`;
+}
+const PROMPT_ITEMS = new Map(PROMPT_GROUPS.flatMap((g) => g.items).map((item) => [promptId(item), item]));
+function promptBuiltIn(item, code) {
+  return PROMPT_SOURCES[item.src][code]?.[item.key] ?? "";
+}
+// Slots are {word}; Marinara's own macros {{user}} / {{char}} are not slots.
+function promptVars(text) {
+  const out = [];
+  for (const m of text.matchAll(/(?<!\{)\{([^{}\s]+)\}(?!\})/g)) if (!out.includes(m[1])) out.push(m[1]);
+  return out;
+}
+function promptMissing(text, built) {
+  return promptVars(built).filter((v) => !text.includes(`{${v}}`));
+}
+function sanitizePrompts(raw) {
+  const out = {};
+  for (const code of LANGS) {
+    const src = raw && typeof raw === "object" && raw[code] && typeof raw[code] === "object" ? raw[code] : {};
+    for (const [id, value] of Object.entries(src)) {
+      const item = PROMPT_ITEMS.get(id);
+      if (!item || !value || typeof value !== "object") continue;
+      const built = promptBuiltIn(item, code);
+      const text = typeof value.t === "string" ? value.t.trim() : "";
+      if (!text || text === built || promptMissing(text, built).length) continue;
+      (out[code] ||= {})[id] = { t: text, b: typeof value.b === "string" ? value.b : built };
+    }
+  }
+  return out;
+}
+// Mode texts edited before 0.9.30 (storage "modeTexts", Russian only) become the player's texts here.
+function withOldModeTexts(raw, old) {
+  const out = raw && typeof raw === "object" ? JSON.parse(JSON.stringify(raw)) : {};
+  if (!old || typeof old !== "object") return out;
+  for (const [key, built] of Object.entries(MODE_TEXTS.ru)) {
+    const text = typeof old[key] === "string" ? old[key].trim() : "";
+    if (!text || text === built) continue;
+    out.ru = out.ru && typeof out.ru === "object" ? out.ru : {};
+    if (!out.ru[`mode:${key}`]) out.ru[`mode:${key}`] = { t: text, b: built };
+  }
+  return out;
+}
+// which groups of the Texts tab are unfolded — each device remembers its own
+const PROMPT_GROUPS_KEY = "kulisy-dev-groups";
+function loadPromptGroups() {
+  try {
+    const keys = JSON.parse(localStorage.getItem(PROMPT_GROUPS_KEY) || "[]");
+    return new Set(Array.isArray(keys) ? keys.filter((k) => PROMPT_GROUPS.some((g) => g.key === k)) : []);
+  } catch {
+    return new Set();
+  }
+}
+function savePromptGroups() {
+  try {
+    localStorage.setItem(PROMPT_GROUPS_KEY, JSON.stringify([...prompts.groups]));
+  } catch {
+    // a private window: the groups simply fold again next time
+  }
+}
+const prompts = {
+  own: sanitizePrompts(withOldModeTexts(saved.prompts, saved.modeTexts)),
+  groups: loadPromptGroups(),
+  pending: null, // an uploaded set waiting for "Upload": { own, n, skipped }
+  setNote: "",
+  open: null, // the id being edited
+  draft: "",
+  error: "",
+};
+function promptOwnItem(item, code) {
+  return prompts.own[code]?.[promptId(item)] || null;
+}
+function promptOwn(src, key, code) {
+  const own = prompts.own[code]?.[`${src}:${key}`];
+  return own ? own.t : undefined;
+}
+// Does a guide come from one of these texts as the player rewrote them? (Built-in texts are known by fixed marks.)
+// Any slot-free stretch of 12+ characters of the player's text counts; spaces are compared collapsed.
+function guideFromOwn(guide, ids) {
+  if (!guide) return false;
+  const flat = guide.replace(/\s+/g, " ");
+  for (const code of LANGS) {
+    for (const id of ids) {
+      const own = prompts.own[code]?.[id];
+      if (!own) continue;
+      const parts = own.t.split(/\{\{[^{}]*\}\}|\{[^{}]*\}/).map((part) => part.replace(/\s+/g, " ").trim());
+      if (parts.some((part) => part.length >= 12 && flat.includes(part))) return true;
+    }
+  }
+  return false;
+}
+function ft(key, vars, code = lang) {
+  let text = promptOwn("fate", key, code) ?? FATE_TEXT[code][key] ?? FATE_TEXT.en[key] ?? key;
+  if (vars) for (const [name, value] of Object.entries(vars)) text = text.split(`{${name}}`).join(String(value));
+  return text;
+}
+
+const fate = {
+  surprise: saved.fateSurprise === true, // secret rolls: no flash, no line under the message (Offstage's storage)
+  noDie: saved.fateNoDie === true, // no die by Marinara's send button (Offstage's storage)
+  log: [], // [{ id, at, f, extra }] — this chat's rolls, newest first
+  logSeq: 0,
+  logTimer: null,
+  pending: null, // { chatId, d, r, o, s, lang, at, msgDone } — my roll, not yet handed to a generation
+  marks: [], // [{ chatId, rec, at }] — a character's roll, waiting for their reply to be written on
+  who: "me", // "me" | characterId — picked in the open menu
+  plan: null, // { chatId, who, d } — an attempt picked in the move menu, rolled only when the turn is sent
+  step: false, // the move menu shows the attempt's "who / how hard"
+  die: null, // the move button (🎭) before Marinara's send button
+  chips: null, // the turn's chips above Marinara's box
+  pop: null,
+  flash: null,
+  flashTimer: null,
+};
+// 0.9.21 (Leah 19.10, the new interface, piece 5): the whisper from the move menu — who hears is the chat's checked
+// hearers (state.hearers, shared with the panel); the whisper itself is written in Marinara's box.
+const whisper = {
+  plan: null, // { chatId, all } — armed: the next message sent in this chat is the whisper; all — "what everyone sees"
+  step: false, // the move menu shows the whisper's "who hears"
+  all: "", // "what everyone sees" being typed in the menu
+};
+
+function d20() {
+  const box = new Uint32Array(1);
+  crypto.getRandomValues(box);
+  return 1 + Math.floor((box[0] / 4294967296) * 20);
+}
+function fateOutcome(d, r) {
+  const edge = FATE_EDGES[d];
+  return r <= edge.fail ? "fail" : r <= edge.cost ? "cost" : "success";
+}
+function fateRecord(p) {
+  const rec = { d: p.d, r: p.r, o: p.o };
+  if (p.s) rec.s = 1; // secret ("Surprise"); 2 once revealed in the log
+  if (p.who) rec.who = p.who;
+  if (p.a) rec.a = p.a.slice(0, 300);
+  return rec;
+}
+function fateGuide(p) {
+  return ft("guide", { o: ft(`g_${p.o}`, null, p.lang) }, p.lang);
+}
+function fateLine(f) {
+  const vars = { d: ft(f.d).toLowerCase(), r: f.r, o: ft(f.o) };
+  const name = f.who ? state.names[f.who] && shortName(f.who) : "";
+  return name ? ft("note_char", { ...vars, name }) : ft("note", vars);
+}
+function fateBadge(extra) {
+  const kulisy = extra && extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : null;
+  const f = kulisy && kulisy.fate;
+  // a secret roll never shows under the message, revealed or not — it opens only in the card's log (Leah, 18.10)
+  if (!f || !FATE_EDGES[f.d] || !FATE_OUTCOMES.includes(f.o) || f.s) return null;
+  return fateLine(f);
+}
+
+function sendButton() {
+  return document.querySelector(".mari-chat-input .mari-chat-send-btn");
+}
+// Marinara's send button turns into "stop" while a reply streams and into a spinner while busy.
+function sendBusy(send) {
+  return send.disabled || sendStreaming(send);
+}
+// Only "a reply is under way": with an empty box Marinara may also disable the button (Manual order, 0.9.6 on Leah's chats).
+function sendStreaming(send) {
+  return !!send.querySelector('svg[class*="stop"], .animate-spin');
+}
+
+// 0.9.17 (Leah 19.10, the new interface, piece 1): the die became the move button 🎭 — everything that goes with this
+// turn (an attempt, an event card, truth or lie) is picked in its menu and shows as a chip above Marinara's box; the
+// chip's × takes it back. An attempt is rolled only when the turn is sent: "me" — when Marinara's request goes out
+// (planTurn), a character — by catching the send and rewriting the box into "/guided …" first (firePlan).
+function ensureDie() {
+  placeDie();
+  panel.classList.toggle("has-move", !!(fate.die && fate.die.isConnected));
+  if (fateReady) renderTry();
+}
+function placeDie() {
+  ensureChips();
+  const send = sendButton();
+  if (!send || !state.chatId || fate.noDie) {
+    if (fate.die && fate.die.isConnected) fate.die.remove();
+    closeFatePop();
+    return;
+  }
+  if (!fate.die) {
+    fate.die = document.createElement("button");
+    fate.die.type = "button";
+    fate.die.className = "kulisy-die kulisy-move";
+    fate.die.dataset.offstageNative = "";
+    fate.die.textContent = "🎭";
+    fate.die.setAttribute("aria-haspopup", "menu");
+    fate.die.addEventListener("click", toggleFatePop);
+    paintDie();
+  }
+  if (fate.die.isConnected && fate.die.nextElementSibling === send) return;
+  send.parentElement.insertBefore(fate.die, send);
+}
+
+function armedHere() {
+  return fate.pending && fate.pending.chatId === state.chatId ? fate.pending : null;
+}
+
+function planHere() {
+  return fate.plan && fate.plan.chatId === state.chatId ? fate.plan : null;
+}
+// The deck's own secret hand ("draws by itself") never shows.
+function eventHere() {
+  const hand = deckArmedHere();
+  return hand && !hand.a ? hand : null;
+}
+function planWords(plan) {
+  return `${plan.who === "me" ? ft("me") : shortName(plan.who)} · ${ft(plan.d).toLowerCase()}`;
+}
+// the user's roll waiting for the reply (Manual order: until a character is picked); a secret one keeps its outcome
+function rolledWords(p) {
+  return `${ft("me")} · ${ft(p.d).toLowerCase()} — ${p.s ? ft("move_waits") : ft(p.o)}`;
+}
+
+function paintDie() {
+  if (!fateReady) return; // the deck and the truth roll are defined further down
+  if (fate.die) {
+    fate.die.classList.toggle("is-armed", !!(planHere() || armedHere() || whisperHere() || eventHere() || truthArmedHere()));
+    fate.die.title = ft("move");
+    fate.die.setAttribute("aria-label", ft("move"));
+    fate.die.setAttribute("aria-expanded", fate.pop ? "true" : "false");
+  }
+  paintChips();
+  renderTry();
+}
+
+// 0.9.25 (Leah 20.10): the attempt in the Fate tab, for players who hide the move button — the menu's step, the same
+// plan and chip; only in Roleplay (Conversation has no box the attempt rewrites).
+// It runs from ensureDie, which a page observer calls on every DOM change: it redraws only when what it shows changed
+// (a redraw is a DOM change too).
+let tryShown = "";
+function renderTry() {
+  const show = !panel.classList.contains("has-move") && !!state.chatId && !!fateBox();
+  const p = armedHere();
+  const key = JSON.stringify([show, lang, p && [p.d, p.o, p.s], planHere(), fate.who, show && fateCast().map((id) => state.names[id])]);
+  if (key === tryShown) return;
+  tryShown = key;
+  fel.tryBox.hidden = !show;
+  if (!show) return;
+  const nodes = [];
+  if (p) {
+    // the roll is already in this chat (Manual order: on the message) — only cancel
+    const armed = document.createElement("div");
+    armed.className = "kulisy-fate-armed";
+    const text = document.createElement("span");
+    text.textContent = armedLabel(p);
+    const off = document.createElement("button");
+    off.type = "button";
+    off.className = "kulisy-clear";
+    off.textContent = ft("cancel");
+    off.addEventListener("click", () => {
+      fate.pending = null;
+      paintDie();
+    });
+    armed.append(text, off);
+    fel.tryBody.replaceChildren(armed);
+    return;
+  }
+  const plan = planHere();
+  const cast = fateCast();
+  if (plan) fate.who = plan.who;
+  if (fate.who !== "me" && !cast.includes(fate.who)) fate.who = "me";
+  if (cast.length) {
+    const label = document.createElement("div");
+    label.className = "kulisy-label";
+    label.textContent = ft("who");
+    const who = document.createElement("div");
+    who.className = "kulisy-mode-group kulisy-fate-chips";
+    for (const id of ["me", ...cast]) {
+      const chip = fateChip(id === "me" ? ft("me") : shortName(id), id === fate.who, () => {
+        fate.who = id;
+        if (plan) fate.plan = { ...plan, who: id };
+        paintDie();
+      });
+      if (id !== "me") chip.title = state.names[id] || "";
+      who.append(chip);
+    }
+    nodes.push(label, who);
+  }
+  const label = document.createElement("div");
+  label.className = "kulisy-label";
+  label.textContent = ft("how");
+  const how = document.createElement("div");
+  how.className = "kulisy-mode-group kulisy-fate-chips";
+  for (const d of FATE_LEVELS) {
+    const on = !!(plan && plan.d === d);
+    how.append(
+      fateChip(ft(d), on, () => {
+        if (on) {
+          fate.plan = null;
+          return paintDie();
+        }
+        fate.plan = { chatId: state.chatId, who: fate.who, d };
+        paintDie();
+        // on a phone the sheet covers the send button the hint stands over — the chip above the box says it there
+        const box = fateBox();
+        if (box && !box.value.trim() && !PHONE.matches) flashHint(fate.who === "me" ? ft("write_me") : ft("write_char", { name: shortName(fate.who) }));
+      }),
+    );
+  }
+  nodes.push(label, how);
+  fel.tryBody.replaceChildren(...nodes);
+}
+
+// The chips go into Marinara's composer right above its input row, where its own attachment chips sit.
+function ensureChips() {
+  const box = fateBox();
+  const shell = box && box.closest(".mari-chat-input");
+  if (!box || !shell || !state.chatId) {
+    if (fate.chips && fate.chips.isConnected) fate.chips.remove();
+    return;
+  }
+  if (!fate.chips) {
+    fate.chips = document.createElement("div");
+    fate.chips.className = "kulisy-chips";
+    fate.chips.dataset.offstageNative = "";
+    paintChips();
+  }
+  let row = box;
+  while (row.parentElement && row.parentElement !== shell) row = row.parentElement;
+  if (row.parentElement !== shell) return;
+  if (fate.chips.parentElement === shell && fate.chips.nextElementSibling === row) return;
+  shell.insertBefore(fate.chips, row);
+}
+
+function moveChip(icon, text, title, onOff) {
+  const chip = document.createElement("span");
+  chip.className = "kulisy-chip";
+  if (title) chip.title = title;
+  const label = document.createElement("span");
+  label.textContent = `${icon} ${text}`;
+  const off = document.createElement("button");
+  off.type = "button";
+  off.className = "kulisy-chip-off";
+  off.textContent = "×";
+  off.setAttribute("aria-label", `${ft("chip_off")}: ${text}`);
+  off.addEventListener("click", (event) => {
+    event.preventDefault();
+    onOff();
+    paintDie();
+  });
+  chip.append(label, off);
+  return chip;
+}
+
+function paintChips() {
+  if (!fate.chips) return;
+  const chips = [];
+  const plan = planHere();
+  if (plan) {
+    chips.push(
+      moveChip("🎲", planWords(plan), "", () => {
+        fate.plan = null;
+      }),
+    );
+  }
+  const p = armedHere();
+  if (p) {
+    chips.push(
+      moveChip("🎲", rolledWords(p), "", () => {
+        fate.pending = null;
+      }),
+    );
+  }
+  const w = whisperHere();
+  if (w) {
+    chips.push(
+      moveChip("🤫", whisperWords(), w.all ? ft("chip_whisper_all", { all: w.all }) : "", () => {
+        whisper.plan = null;
+        dropHint();
+      }),
+    );
+  }
+  const hand = eventHere();
+  if (hand) {
+    const tone = deckHere() && deck.data.tone !== "any" ? ft(`tone_${deck.data.tone}`).toLowerCase() : "";
+    const text = hand.s ? ft("chip_event_secret") : tone ? ft("chip_event_tone", { tone }) : ft("chip_event");
+    chips.push(
+      moveChip("🃏", text, hand.s ? "" : hand.cards.map((c) => c.t).join(" · "), () => {
+        deck.pending = null;
+        setDeckHint("");
+        renderDeck();
+      }),
+    );
+  }
+  if (truthArmedHere()) {
+    chips.push(
+      moveChip("⚖️", ft("chip_truth"), "", () => {
+        truth.pending = null;
+        setTruthHint("");
+        renderTruth();
+      }),
+    );
+  }
+  fate.chips.replaceChildren(...chips);
+  fate.chips.hidden = !chips.length;
+}
+
+function armedLabel(p) {
+  return p.s ? ft("armed_secret") : ft("armed", { d: ft(p.d), o: ft(p.o) });
+}
+
+function closeFatePop() {
+  if (!fate.pop) return;
+  fate.pop.remove();
+  fate.pop = null;
+  paintDie();
+}
+
+// Above the die — or above Marinara's send button while the die is hidden.
+function fateAnchor() {
+  return fate.die && fate.die.isConnected ? fate.die : sendButton();
+}
+// Above the whole input row: a box grown to several lines stands taller than the button; and above the turn's chips.
+function placeAboveDie(node) {
+  const rect = fateAnchor().getBoundingClientRect();
+  const box = fateBox();
+  const shell = box && box.closest(".mari-chat-input");
+  let row = box;
+  while (row && row.parentElement && row.parentElement !== shell) row = row.parentElement;
+  let top = row && shell && row.contains(fateAnchor()) ? Math.min(rect.top, row.getBoundingClientRect().top) : rect.top;
+  if (fate.chips && !fate.chips.hidden && fate.chips.isConnected && shell && shell.contains(fate.chips)) {
+    top = Math.min(top, fate.chips.getBoundingClientRect().top);
+  }
+  node.style.right = `${Math.max(8, Math.round(window.innerWidth - rect.right))}px`;
+  node.style.bottom = `${Math.round(window.innerHeight - top + 8)}px`;
+  if (node === fate.pop) {
+    const screenTop = window.visualViewport ? window.visualViewport.offsetTop : 0;
+    node.style.maxHeight = `${Math.max(160, Math.round(top - 8 - screenTop - 8))}px`;
+  }
+}
+
+function fateItem(text, onClick) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "kulisy-fate-pick";
+  item.setAttribute("role", "menuitem");
+  item.textContent = text;
+  item.addEventListener("click", onClick);
+  return item;
+}
+
+function toggleFatePop() {
+  if (fate.pop) return closeFatePop();
+  if (!fate.die || !state.chatId) return;
+  showFlash("", ""); // a hint from before would stand under the menu
+  const pop = document.createElement("div");
+  // Marinara's own popup classes: a theme that dresses Marinara's input popups dresses this one too
+  pop.className = "kulisy-fate-pop kulisy-move-pop mari-chat-style-surface mari-chat-input-popup";
+  pop.dataset.offstageNative = "";
+  pop.setAttribute("role", "menu");
+  const plan = planHere();
+  fate.step = !!(plan || armedHere());
+  fate.who = plan && (plan.who === "me" || fateCast().includes(plan.who)) ? plan.who : "me";
+  const w = whisperHere();
+  whisper.step = !fate.step && !!w;
+  if (w) whisper.all = w.all;
+  document.body.append(pop);
+  fate.pop = pop;
+  renderMovePop();
+  paintDie();
+}
+
+function moveItem(icon, title, sub, on, onClick) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "kulisy-move-item";
+  item.setAttribute("role", "menuitem");
+  if (on) item.dataset.state = "on";
+  const mark = document.createElement("span");
+  mark.className = "kulisy-move-icon";
+  mark.setAttribute("aria-hidden", "true");
+  mark.textContent = icon;
+  const text = document.createElement("span");
+  text.className = "kulisy-move-text";
+  const name = document.createElement("b");
+  name.textContent = title;
+  const more = document.createElement("span");
+  more.textContent = sub;
+  text.append(name, more);
+  item.append(mark, text);
+  item.addEventListener("click", onClick);
+  return item;
+}
+
+function movePill(text, on, onClick) {
+  const pill = document.createElement("button");
+  pill.type = "button";
+  pill.className = "kulisy-fate-who";
+  pill.textContent = text;
+  pill.setAttribute("aria-pressed", on ? "true" : "false");
+  pill.addEventListener("click", onClick);
+  return pill;
+}
+
+function moveLabel(key) {
+  const head = document.createElement("div");
+  head.className = "kulisy-move-label";
+  head.textContent = ft(key);
+  return head;
+}
+
+function renderMovePop() {
+  const pop = fate.pop;
+  if (!pop) return;
+  const plan = planHere();
+  const p = armedHere();
+  const nodes = [];
+  nodes.push(
+    moveItem("🎲", ft("move_try"), p ? armedLabel(p) : plan ? planWords(plan) : ft("move_try_sub"), !!(plan || p), () => {
+      fate.step = !fate.step;
+      if (fate.step) whisper.step = false;
+      renderMovePop();
+    }),
+  );
+  if (fate.step) {
+    const step = document.createElement("div");
+    step.className = "kulisy-move-step";
+    if (p) {
+      // the roll is already in this chat (Manual order: on the message) — no second roll, only cancel
+      step.append(
+        fateItem(ft("cancel"), () => {
+          fate.pending = null;
+          closeFatePop();
+          paintDie();
+        }),
+      );
+    } else {
+      const cast = fateCast();
+      if (cast.length) {
+        step.append(moveLabel("who"));
+        const who = document.createElement("div");
+        who.className = "kulisy-move-pills";
+        for (const id of ["me", ...cast]) {
+          const pill = movePill(id === "me" ? ft("me") : shortName(id), id === fate.who, () => {
+            fate.who = id;
+            renderMovePop();
+          });
+          if (id !== "me") pill.title = state.names[id] || "";
+          who.append(pill);
+        }
+        step.append(who);
+      }
+      step.append(moveLabel("how"));
+      const how = document.createElement("div");
+      how.className = "kulisy-move-pills";
+      for (const d of FATE_LEVELS) {
+        how.append(movePill(ft(d), !!(plan && plan.d === d && plan.who === fate.who), () => pickFate(d)));
+      }
+      step.append(how);
+    }
+    nodes.push(step);
+  }
+  const w = whisperHere();
+  nodes.push(
+    moveItem("🤫", ft("move_whisper"), w ? whisperWords() : ft("move_whisper_sub"), !!w, () => {
+      const why = whisperBlocked();
+      if (why) return showFateHint(why);
+      whisper.step = !whisper.step;
+      if (whisper.step) fate.step = false;
+      renderMovePop();
+    }),
+  );
+  if (whisper.step) nodes.push(whisperStep());
+  const hand = eventHere();
+  const tone = deckHere() && deck.data.tone !== "any" ? ft(`tone_${deck.data.tone}`).toLowerCase() : "";
+  nodes.push(
+    moveItem(
+      "🃏",
+      ft("move_event"),
+      hand ? ft("move_waits") : tone ? ft("move_event_tone", { tone }) : ft("move_event_sub"),
+      !!hand,
+      () => {
+        if (hand) return showFateHint(ft("deck_already"));
+        const error = drawDeckNow();
+        if (error) return showFateHint(error);
+        closeFatePop();
+      },
+    ),
+  );
+  const asked = truthArmedHere();
+  nodes.push(
+    moveItem("⚖️", ft("move_truth"), asked ? ft("move_waits") : ft("move_truth_sub"), !!asked, () => {
+      if (asked) return showFateHint(ft("truth_already"));
+      rollTruth();
+      closeFatePop();
+    }),
+  );
+  const hint = document.createElement("div");
+  hint.className = "kulisy-fate-hint";
+  hint.hidden = true;
+  nodes.push(hint);
+  pop.replaceChildren(...nodes);
+  placeAboveDie(pop);
+}
+
+// ---- the whisper (0.9.21): who hears is picked in the menu, the words go into Marinara's own box ----
+function whisperHere() {
+  return whisper.plan && whisper.plan.chatId === state.chatId ? whisper.plan : null;
+}
+// the checked hearers who are here (those away hear nothing)
+function whisperHearers() {
+  const heard = new Set(state.hearers[state.chatId] || []);
+  return fateCast().filter((id) => heard.has(id));
+}
+function whisperWords() {
+  const names = whisperHearers().map(shortName);
+  return names.length ? ft("chip_whisper", { names: names.join(", ") }) : ft("whisper_pick");
+}
+// the same limits as the panel's whisper: someone not to hear it, and the engine hiding per character
+function whisperBlocked() {
+  const chat = state.chat;
+  if (!chat || chat.characterIds.length < 2) return t("note_one");
+  if (chat.groupChatMode !== "individual") return t("note_individual");
+  return "";
+}
+function whisperStep() {
+  const step = document.createElement("div");
+  step.className = "kulisy-move-step";
+  const cast = fateCast();
+  step.append(moveLabel("whisper_hear"));
+  if (cast.length) {
+    const heard = new Set(whisperHearers());
+    const who = document.createElement("div");
+    who.className = "kulisy-move-pills";
+    for (const id of cast) {
+      const pill = movePill(shortName(id), heard.has(id), () => {
+        void toggleHearer(id, !heard.has(id));
+        renderWho();
+        renderMovePop();
+        paintDie();
+      });
+      pill.title = state.names[id] || "";
+      who.append(pill);
+    }
+    step.append(who);
+  } else {
+    const none = document.createElement("div");
+    none.className = "kulisy-move-label";
+    none.textContent = ft("whisper_none");
+    step.append(none);
+  }
+  step.append(moveLabel("whisper_all"));
+  const all = document.createElement("input");
+  all.type = "text";
+  all.className = "kulisy-move-input";
+  all.maxLength = 500;
+  all.placeholder = ft("whisper_all_ph");
+  all.value = whisper.all;
+  all.addEventListener("input", () => {
+    whisper.all = all.value;
+    const w = whisperHere();
+    if (w) {
+      w.all = all.value.trim();
+      paintDie();
+    }
+  });
+  all.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing) return;
+    event.preventDefault();
+    armWhisper();
+  });
+  step.append(all);
+  const acts = document.createElement("div");
+  acts.className = "kulisy-move-acts";
+  const go = fateItem(whisperHere() ? ft("whisper_done") : ft("whisper_go"), armWhisper);
+  go.classList.add("kulisy-move-go");
+  acts.append(go);
+  if (whisperHere()) {
+    acts.append(
+      fateItem(ft("whisper_off"), () => {
+        whisper.plan = null;
+        whisper.all = "";
+        whisper.step = false;
+        dropHint();
+        closeFatePop();
+      }),
+    );
+  }
+  step.append(acts);
+  return step;
+}
+function armWhisper() {
+  if (!state.chatId) return closeFatePop();
+  if (!whisperHearers().length) return showFateHint(ft(fateCast().length ? "whisper_pick" : "whisper_none"));
+  whisper.plan = { chatId: state.chatId, all: whisper.all.trim() };
+  whisper.step = false;
+  closeFatePop();
+  const box = fateBox();
+  if (!box) return;
+  if (!box.value.trim()) flashHint(ft("write_whisper"));
+  box.focus();
+}
+// An armed whisper is never sent empty (an empty send would only call the next reply) or to no one.
+function whisperStop(event) {
+  const box = fateBox();
+  if (!whisperHere() || !box) return;
+  const text = box.value.trim();
+  if (text.startsWith("/")) return; // a command of the user's own — Marinara's business
+  const why = !text ? ft("write_whisper") : !whisperHearers().length ? ft("whisper_pick") : "";
+  if (!why) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  flashHint(why);
+}
+
+function showFateHint(text) {
+  const hint = fate.pop && fate.pop.querySelector(".kulisy-fate-hint");
+  if (!hint) return;
+  hint.textContent = text;
+  hint.hidden = false;
+}
+
+function flashFate(p) {
+  showFlash(p.s ? "" : fateLine(p), `is-${p.o}`);
+}
+// A short word above the move button (the roll's outcome, or what to do next) — gone in 5 s.
+function flashHint(text) {
+  showFlash(text, "is-hint");
+}
+function showFlash(text, kind) {
+  if (fate.flash) fate.flash.remove();
+  if (fate.flashTimer !== null) marinara.clearTimeout(fate.flashTimer);
+  fate.flash = null;
+  fate.flashTimer = null;
+  if (!text || !fateAnchor()) return;
+  const flash = document.createElement("div");
+  flash.className = `kulisy-fate-flash ${kind}`;
+  flash.dataset.offstageNative = "";
+  flash.textContent = text;
+  document.body.append(flash);
+  placeAboveDie(flash);
+  fate.flash = flash;
+  fate.flashTimer = marinara.setTimeout(() => {
+    fate.flashTimer = null;
+    flash.remove();
+    if (fate.flash === flash) fate.flash = null;
+  }, 5000);
+}
+
+// Characters who can attempt: this chat's cards, except those sent away in "Who's here".
+function fateCast() {
+  if (!state.chat || !Array.isArray(state.chat.characterIds)) return [];
+  const away = awayIds();
+  return state.chat.characterIds.filter((id) => state.names[id] && !away.includes(id));
+}
+
+// Put text into Marinara's box the way typing does (its send reads the box itself).
+function setBoxValue(textarea, value) {
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(textarea, value);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function fateBox() {
+  return document.querySelector(".mari-chat-input .mari-chat-input-textarea");
+}
+
+// A difficulty in the move menu only sets the attempt's chip; the die is rolled when the turn is sent.
+function pickFate(d) {
+  if (!state.chatId) return closeFatePop();
+  const who = fate.who !== "me" && fateCast().includes(fate.who) ? fate.who : "me";
+  fate.plan = { chatId: state.chatId, who, d };
+  closeFatePop();
+  const box = fateBox();
+  if (!box) return;
+  if (!box.value.trim()) flashHint(who === "me" ? ft("write_me") : ft("write_char", { name: shortName(who) }));
+  box.focus();
+}
+
+// The user's own attempt: rolled the moment Marinara sends the turn (a new message — not a regenerate, continue,
+// impersonate, an empty send or the panel's whisper). From here it goes the die's old way (fate.pending).
+function planTurn(input, init) {
+  const plan = fate.plan;
+  if (!plan || plan.who !== "me" || fate.pending) return;
+  const path = requestPath(input);
+  const body = JSON.parse(init.body);
+  if (path === "/api/generate") {
+    if (body.chatId !== plan.chatId || body.regenerateMessageId || body.continueMessageId || body.impersonate) return;
+    if (typeof body.userMessage !== "string" || !body.userMessage.trim()) return;
+  } else if (path === `/api/chats/${plan.chatId}/messages`) {
+    const extra = body.extra && typeof body.extra === "object" ? body.extra : {};
+    if (body.role !== "user" || extra.kulisy) return;
+  } else {
+    return;
+  }
+  fate.plan = null;
+  const r = d20();
+  const o = fateOutcome(plan.d, r);
+  fate.pending = { chatId: plan.chatId, d: plan.d, r, o, s: fate.surprise ? 1 : 0, lang, at: Date.now(), msgDone: false };
+  flashFate(fate.pending);
+  paintDie();
+}
+
+// A character's attempt: Marinara's box must become "/guided respond for …" before Marinara reads it, so the send
+// (its button, or Enter when Enter sends) is caught first. Our own click on the button goes through (sendPass).
+let sendPass = false;
+function clickSend(send) {
+  sendPass = true;
+  try {
+    send.click();
+  } finally {
+    sendPass = false;
+  }
+}
+function characterPlanHere() {
+  const plan = planHere();
+  return plan && plan.who !== "me" ? plan : null;
+}
+function firePlan(event) {
+  const plan = characterPlanHere();
+  const send = sendButton();
+  const box = fateBox();
+  if (!plan || !send || !box) return;
+  const text = box.value.trim();
+  if (text.startsWith("/")) return; // a command of the user's own — Marinara's business
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const name = state.names[plan.who] ? shortName(plan.who) : "?";
+  if (!text) return flashHint(ft("write_char", { name }));
+  if (!fateCast().includes(plan.who)) return flashHint(ft("char_gone", { name }));
+  if (sendStreaming(send)) return flashHint(ft("busy"));
+  fate.plan = null;
+  paintDie();
+  rollAttempt(plan.who, plan.d, send, box);
+}
+function onSendClick(event) {
+  if (sendPass || (!characterPlanHere() && !whisperHere())) return;
+  const send = sendButton();
+  if (!send || !(event.target instanceof Node) || !send.contains(event.target)) return;
+  if (characterPlanHere()) firePlan(event);
+  else if (!sendStreaming(send)) whisperStop(event); // while a reply streams the button is Marinara's Stop
+}
+// Marinara's "Enter to send" for roleplay (off by default) lives in its persisted UI store.
+function enterSends() {
+  try {
+    const ui = JSON.parse(localStorage.getItem("marinara-engine-ui") || "null");
+    return !!(ui && ui.state && ui.state.enterToSendRP === true);
+  } catch {
+    return false;
+  }
+}
+function onSendKey(event) {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing || (!characterPlanHere() && !whisperHere())) return;
+  if (event.target !== fateBox() || !enterSends()) return;
+  if (characterPlanHere()) firePlan(event);
+  else whisperStop(event);
+}
+
+// The roll itself — from the die's menu or from the card: the attempt's words are already in Marinara's box.
+function rollAttempt(who, d, send, textarea) {
+  const r = d20();
+  const o = fateOutcome(d, r);
+  const s = fate.surprise ? 1 : 0;
+  if (who === "me") {
+    fate.pending = { chatId: state.chatId, d, r, o, s, lang, at: Date.now(), msgDone: false };
+    flashFate(fate.pending);
+    paintDie();
+    clickSend(send);
+    return;
+  }
+  // A character's attempt: Marinara's own "/guided respond for <name>: <direction>" — no message from the user.
+  const name = state.names[who];
+  const a = textarea.value.trim().replace(/\s+/g, " ");
+  const p = { chatId: state.chatId, who, a, d, r, o, s, at: Date.now() };
+  const direction = ft("guide_char", { name, a: a.replace(/[.!?…]+$/, ""), o: ft(`g_${o}`) }).replace(/\s+/g, " ");
+  fate.marks.push({ chatId: p.chatId, who, rec: fateRecord(p), at: p.at });
+  setBoxValue(textarea, `/guided respond for ${name}: ${direction}`);
+  flashFate(p);
+  clickSend(send);
+}
+
+function msTime(value) {
+  return typeof value === "number" ? value : Date.parse(value);
+}
+
+// A character's roll goes on their reply once Marinara says the generation is done.
+async function markFateReplies(chatId) {
+  const due = fate.marks.filter((m) => m.chatId === chatId);
+  if (!due.length) return;
+  fate.marks = fate.marks.filter((m) => m.chatId !== chatId);
+  try {
+    const messages = await api(chatPath(chatId, "/messages?limit=12"));
+    const list = (Array.isArray(messages) ? messages : []).slice().reverse();
+    for (const mark of due) {
+      const found = list.find((m) => m.role === "assistant" && m.characterId === mark.who && msTime(m.createdAt) >= mark.at - 2000);
+      if (!found) continue;
+      const extra = parseMaybeJson(found.extra, {}) || {};
+      const kulisy = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : {};
+      if (kulisy.fate) continue;
+      const next = { ...kulisy, fate: mark.rec };
+      await api(chatPath(chatId, `/messages/${encodeURIComponent(found.id)}/extra`), {
+        method: "PATCH",
+        body: JSON.stringify({ kulisy: next }),
+      });
+      patchCachedExtra(chatId, found.id, { ...extra, kulisy: next });
+    }
+    scheduleBadges();
+    scheduleFateLog();
+  } catch (error) {
+    marinara.log.warn("Could not mark the roll on the reply", error);
+  }
+}
+// A regenerate is a new swipe of the reply, and every swipe keeps its own extra: the character's roll stays on the swipe
+// it was written to. Marinara replays the same guide, so the outcome is the same — the roll is carried to the swipe now
+// shown (only from a swipe with the very same guide). 0.9.6: Leah's regenerated rolls fell out of the log and the marker.
+// Only a character's attempt ("guide_char"): the user's own roll lives on the user's message, which a regenerate keeps.
+// The deck's draw (0.9.7) is carried the same way — the guide holds the drawn cards.
+const FATE_GUIDE_MARKS = [["Попытка (", "броском кубика"], ["Attempt (", "by a die roll"]];
+const SWIPE_CARRY = [
+  { key: "fate", marks: FATE_GUIDE_MARKS, own: ["fate:guide_char"] },
+  { key: "deck", marks: [["Колода событий:"], ["Event deck:"]], own: ["fate:deck_guide_many", "fate:deck_guide_one"] },
+  { key: "truth", marks: [["Правда или ложь:"], ["Truth or lie:"]], own: ["fate:truth_guide_truth", "fate:truth_guide_lie"] },
+];
+function replayGuide(extra) {
+  const guide = extra && extra.generationReplay && extra.generationReplay.generationGuide;
+  return typeof guide === "string" ? guide : null;
+}
+function guideHas(guide, marks) {
+  return !!guide && marks.some((set) => set.every((mark) => guide.includes(mark)));
+}
+async function healFateSwipes(chatId, messages) {
+  let healed = 0;
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (m.role !== "assistant") continue;
+    const extra = parseMaybeJson(m.extra, {}) || {};
+    const kulisy = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : {};
+    const guide = replayGuide(extra);
+    const want = SWIPE_CARRY.filter((c) => !kulisy[c.key] && (guideHas(guide, c.marks) || guideFromOwn(guide, c.own)));
+    if (!want.length) continue;
+    try {
+      const swipes = await api(chatPath(chatId, `/messages/${encodeURIComponent(m.id)}/swipes`));
+      const others = (Array.isArray(swipes) ? swipes : []).map((swipe) => parseMaybeJson(swipe.extra, {}) || {});
+      const next = { ...kulisy };
+      for (const c of want) {
+        const source = others.find(
+          (e) => e.kulisy && typeof e.kulisy === "object" && e.kulisy[c.key] && replayGuide(e) === guide,
+        );
+        if (source) next[c.key] = source.kulisy[c.key];
+      }
+      if (!want.some((c) => next[c.key])) continue;
+      await api(chatPath(chatId, `/messages/${encodeURIComponent(m.id)}/extra`), {
+        method: "PATCH",
+        body: JSON.stringify({ kulisy: next }),
+      });
+      m.extra = { ...extra, kulisy: next };
+      patchCachedExtra(chatId, m.id, m.extra);
+      healed += 1;
+    } catch (error) {
+      marinara.log.warn("Could not carry the roll to the new swipe", error);
+    }
+  }
+  if (healed) scheduleBadges();
+  return healed;
+}
+async function afterGeneration(chatId) {
+  await markFateReplies(chatId);
+  await markDeckReplies(chatId);
+  await markTruthReplies(chatId);
+  try {
+    if (await healFateSwipes(chatId, await api(chatPath(chatId, "/messages?limit=6")))) scheduleFateLog();
+  } catch (error) {
+    marinara.log.warn("Could not check the reply for a roll", error);
+  }
+}
+function onGenerationComplete(event) {
+  const chatId = event && event.detail && event.detail.chatId;
+  if (chatId) void afterGeneration(chatId);
+  if (chatId === state.chatId) scheduleFateLog();
+}
+function onGenerationError(event) {
+  const chatId = event && event.detail && event.detail.chatId;
+  if (chatId) fate.marks = fate.marks.filter((m) => m.chatId !== chatId);
+  // the reply failed: the drawn cards wait for the next one
+  if (chatId) for (const m of deck.marks.filter((mark) => mark.chatId === chatId)) restoreDeck(m.p);
+  if (chatId) for (const m of truth.marks.filter((mark) => mark.chatId === chatId)) restoreTruth(m.p);
+}
+
+function onFateOutside(event) {
+  if (!fate.pop) return;
+  const target = event.target;
+  if (target instanceof Node && (fate.pop.contains(target) || (fate.die && fate.die.contains(target)))) return;
+  closeFatePop();
+}
+function onFateEscape(event) {
+  if (event.key === "Escape" && fate.pop) closeFatePop();
+}
+
+// ---- the Deck and Log tabs: the deck, "Truth or lie", the die's options, this chat's roll log ----
+// The log is read from the chat's messages (extra.kulisy.fate); a secret roll opens on a tap (s: 2).
+
+const FATE_LOG_MAX = 40;
+
+function paintFateTexts() {
+  for (const root of [panel, fel.secretForm]) {
+    for (const node of root.querySelectorAll("[data-ft]")) node.textContent = ft(node.dataset.ft);
+    for (const node of root.querySelectorAll("[data-ft-ph]")) node.placeholder = ft(node.dataset.ftPh);
+    for (const node of root.querySelectorAll("[data-ft-title]")) node.title = ft(node.dataset.ftTitle);
+  }
+  renderFatePages();
+}
+
+// ---- the Texts tab (developer mode): one card per group, a row per text; a tap opens it for editing ----
+function renderPrompts() {
+  if (!fateReady) return;
+  fel.devIntro.textContent = ft("dev_intro", { lang: ft(`dev_lang_${lang}`) });
+  const cards = [];
+  for (const group of PROMPT_GROUPS) {
+    const card = document.createElement("section");
+    card.className = "kulisy-card kulisy-dev-group";
+    // folded by default (Leah 20.10: the list grew too long); a group with a text being edited stays open
+    const isOpen = prompts.groups.has(group.key) || group.items.some((item) => promptId(item) === prompts.open);
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "kulisy-card-head kulisy-dev-head";
+    head.setAttribute("aria-expanded", String(isOpen));
+    const words = document.createElement("span");
+    words.className = "kulisy-dev-head-words";
+    const title = document.createElement("span");
+    title.className = "kulisy-card-title";
+    title.textContent = ft(group.title);
+    words.append(title);
+    const changed = group.items.filter((item) => promptOwnItem(item, lang)).length;
+    if (changed) {
+      const sub = document.createElement("span");
+      sub.className = "kulisy-card-sub";
+      sub.textContent = ft("dev_changed", { n: changed });
+      words.append(sub);
+    }
+    head.append(words);
+    head.addEventListener("click", () => {
+      if (isOpen) {
+        prompts.groups.delete(group.key);
+        if (group.items.some((item) => promptId(item) === prompts.open)) prompts.open = null;
+      } else prompts.groups.add(group.key);
+      savePromptGroups();
+      renderPrompts();
+    });
+    card.append(head);
+    cards.push(card);
+    if (!isOpen) continue;
+    const body = document.createElement("div");
+    body.className = "kulisy-card-body kulisy-dev-list";
+    if (group.hint) {
+      const hint = document.createElement("div");
+      hint.className = "kulisy-hint kulisy-dev-group-hint";
+      hint.textContent = ft(group.hint);
+      body.append(hint);
+    }
+    for (const item of group.items) {
+      const id = promptId(item);
+      const open = prompts.open === id;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "kulisy-dev-row";
+      row.setAttribute("aria-expanded", String(open));
+      const name = document.createElement("span");
+      name.className = "kulisy-dev-name";
+      name.textContent = ft(item.name);
+      row.append(name);
+      if (promptOwnItem(item, lang)) {
+        const dot = document.createElement("span");
+        dot.className = "kulisy-dev-dot";
+        row.append(dot);
+      }
+      row.addEventListener("click", () => {
+        if (prompts.open === id) prompts.open = null;
+        else {
+          prompts.open = id;
+          const own = promptOwnItem(item, lang);
+          prompts.draft = own ? own.t : promptBuiltIn(item, lang);
+        }
+        prompts.error = "";
+        renderPrompts();
+      });
+      body.append(row);
+      if (open) body.append(promptForm(item));
+    }
+    card.append(body);
+  }
+  cards.push(promptSetCard());
+  fel.devGroups.replaceChildren(...cards);
+}
+
+// ---- the text set: all the player's texts as one file (0.9.32, Leah 20.10) ----
+// The file: { offstage: "texts", version, texts: { ru|en: { "<src>:<key>": { t, b } } } }. Uploading replaces every
+// own text with the file's (after sanitizePrompts); nothing is written before the player confirms.
+function promptCount(own) {
+  return LANGS.reduce((n, code) => n + Object.keys(own[code] || {}).length, 0);
+}
+function promptButton(text, cls, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = cls;
+  button.textContent = text;
+  button.addEventListener("click", onClick);
+  return button;
+}
+function promptSetCard() {
+  const card = document.createElement("section");
+  card.className = "kulisy-card kulisy-dev-set";
+  const head = document.createElement("div");
+  head.className = "kulisy-card-head";
+  const title = document.createElement("div");
+  title.className = "kulisy-card-title";
+  title.textContent = ft("dev_set");
+  head.append(title);
+  const body = document.createElement("div");
+  body.className = "kulisy-card-body";
+  const hint = document.createElement("div");
+  hint.className = "kulisy-hint";
+  hint.textContent = ft("dev_set_hint");
+  body.append(hint);
+  const pending = prompts.pending;
+  if (pending) {
+    const ask = document.createElement("div");
+    ask.className = "kulisy-hint kulisy-dev-set-ask";
+    const mine = promptCount(prompts.own);
+    ask.textContent = [
+      ft("dev_set_ask", { n: pending.n }),
+      mine ? ft("dev_set_replace", { m: mine }) : "",
+      pending.skipped ? ft("dev_set_skipped", { n: pending.skipped }) : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const actions = document.createElement("div");
+    actions.className = "kulisy-deck-actions";
+    actions.append(
+      promptButton(ft("dev_set_load"), "kulisy-send kulisy-dev-set-apply", () => void applyPromptSet()),
+      promptButton(ft("dev_cancel"), "kulisy-clear", () => {
+        prompts.pending = null;
+        renderPrompts();
+      }),
+    );
+    body.append(ask, actions);
+  } else {
+    const actions = document.createElement("div");
+    actions.className = "kulisy-deck-actions";
+    const file = document.createElement("input");
+    file.type = "file";
+    file.accept = ".json,application/json";
+    file.hidden = true;
+    file.addEventListener("change", () => {
+      const picked = file.files && file.files[0];
+      if (picked) void readPromptSet(picked);
+    });
+    actions.append(
+      promptButton(ft("dev_set_save"), "kulisy-send kulisy-dev-set-save", downloadPromptSet),
+      promptButton(ft("dev_set_load"), "kulisy-clear kulisy-dev-set-load", () => file.click()),
+      file,
+    );
+    body.append(actions);
+  }
+  if (prompts.setNote) {
+    const note = document.createElement("div");
+    note.className = "kulisy-hint kulisy-dev-set-note";
+    note.textContent = prompts.setNote;
+    body.append(note);
+  }
+  card.append(head, body);
+  return card;
+}
+function downloadPromptSet() {
+  if (!promptCount(prompts.own)) {
+    prompts.setNote = ft("dev_set_empty");
+    renderPrompts();
+    return;
+  }
+  const file = { offstage: "texts", version: VERSION, texts: prompts.own };
+  const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const day = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  link.href = url;
+  link.download = `offstage-texts-${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  prompts.setNote = "";
+  renderPrompts();
+}
+async function readPromptSet(picked) {
+  prompts.pending = null;
+  prompts.setNote = "";
+  let raw;
+  try {
+    raw = JSON.parse(await picked.text());
+  } catch {
+    raw = null;
+  }
+  const texts = raw && typeof raw === "object" && raw.offstage === "texts" ? raw.texts : null;
+  if (!texts || typeof texts !== "object") {
+    prompts.setNote = ft("dev_set_bad");
+    renderPrompts();
+    return;
+  }
+  // a text without its built-in one ("b") is taken as written over today's built-in text
+  const full = {};
+  let total = 0;
+  for (const code of LANGS) {
+    const src = texts[code] && typeof texts[code] === "object" ? texts[code] : {};
+    for (const [id, value] of Object.entries(src)) {
+      total += 1;
+      const item = PROMPT_ITEMS.get(id);
+      const t = typeof value === "string" ? value : value && typeof value.t === "string" ? value.t : "";
+      const b = value && typeof value.b === "string" ? value.b : item ? promptBuiltIn(item, code) : "";
+      (full[code] ||= {})[id] = { t, b };
+    }
+  }
+  const own = sanitizePrompts(full);
+  const n = promptCount(own);
+  if (!n) prompts.setNote = ft("dev_set_none");
+  else prompts.pending = { own, n, skipped: total - n };
+  renderPrompts();
+}
+async function applyPromptSet() {
+  const pending = prompts.pending;
+  if (!pending) return;
+  try {
+    await marinara.storage.patch({ prompts: pending.own, modeTexts: {} });
+  } catch (error) {
+    marinara.log.warn("Could not upload the text set", error);
+    prompts.setNote = ft("dev_set_error");
+    renderPrompts();
+    return;
+  }
+  prompts.own = pending.own;
+  prompts.pending = null;
+  prompts.open = null;
+  prompts.error = "";
+  prompts.setNote = ft("dev_set_done", { n: pending.n });
+  renderPrompts();
+  const chatId = state.chatId;
+  if (chatId) void earQueue(async () => mode.loaded && reconcileMode(chatId));
+}
+
+function promptForm(item) {
+  const built = promptBuiltIn(item, lang);
+  const own = promptOwnItem(item, lang);
+  const form = document.createElement("div");
+  form.className = "kulisy-dev-form";
+  if (own && own.b !== built) {
+    const note = document.createElement("div");
+    note.className = "kulisy-hint kulisy-dev-note";
+    note.textContent = ft("dev_updated");
+    form.append(note);
+  }
+  const area = document.createElement("textarea");
+  area.className = "kulisy-dev-text";
+  area.rows = 7;
+  area.value = prompts.draft;
+  area.addEventListener("input", () => {
+    prompts.draft = area.value;
+  });
+  const vars = promptVars(built);
+  const slots = document.createElement("div");
+  slots.className = "kulisy-hint kulisy-dev-vars";
+  if (vars.length) {
+    slots.append(ft("dev_vars"));
+    for (const v of vars) {
+      const line = document.createElement("div");
+      const code = document.createElement("code");
+      code.textContent = `{${v}}`;
+      const known = FATE_TEXT[lang][`dev_var_${v}`];
+      line.append(code, known ? ` — ${known}` : "");
+      slots.append(line);
+    }
+  } else slots.textContent = ft("dev_no_vars");
+  form.append(area, slots);
+  if (prompts.error) {
+    const error = document.createElement("div");
+    error.className = "kulisy-hint kulisy-fate-card-hint";
+    error.textContent = prompts.error;
+    form.append(error);
+  }
+  const actions = document.createElement("div");
+  actions.className = "kulisy-deck-actions";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "kulisy-send";
+  save.textContent = ft("dev_save");
+  save.addEventListener("click", () => void savePrompt(item));
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "kulisy-clear";
+  cancel.textContent = ft("dev_cancel");
+  cancel.addEventListener("click", () => {
+    prompts.open = null;
+    prompts.error = "";
+    renderPrompts();
+  });
+  actions.append(save, cancel);
+  form.append(actions);
+  if (own || prompts.draft.trim() !== built) {
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "kulisy-clear kulisy-dev-reset";
+    reset.textContent = ft("dev_reset");
+    reset.addEventListener("click", () => {
+      prompts.draft = built;
+      prompts.error = "";
+      renderPrompts();
+    });
+    form.append(reset);
+  }
+  return form;
+}
+
+async function savePrompt(item) {
+  const built = promptBuiltIn(item, lang);
+  const text = prompts.draft.trim();
+  const id = promptId(item);
+  const fail = (message) => {
+    prompts.error = message;
+    renderPrompts();
+  };
+  if (!text) return fail(ft("dev_empty"));
+  const missing = promptMissing(text, built);
+  if (missing.length) return fail(ft("dev_missing", { list: missing.map((v) => `{${v}}`).join(", ") }));
+  const next = JSON.parse(JSON.stringify(prompts.own));
+  next[lang] = next[lang] || {};
+  if (text === built) delete next[lang][id];
+  else next[lang][id] = { t: text, b: built };
+  try {
+    await marinara.storage.patch({ prompts: next, modeTexts: {} });
+  } catch (error) {
+    marinara.log.warn("Could not save the text", error);
+    return fail(ft("dev_save_error"));
+  }
+  prompts.own = sanitizePrompts(next);
+  prompts.open = null;
+  prompts.error = "";
+  renderPrompts();
+  // the mode's lorebook entries carry the texts: rewrite this chat's now (other chats when they are opened)
+  const chatId = state.chatId;
+  if (item.src === "mode" && chatId) void earQueue(async () => mode.loaded && reconcileMode(chatId));
+}
+
+function fateChip(text, on, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "kulisy-mode-btn";
+  button.textContent = text;
+  button.dataset.state = on ? "on" : "";
+  button.setAttribute("aria-pressed", String(on));
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function renderFatePages() {
+  fel.surprise.checked = fate.surprise;
+  fel.noDie.checked = fate.noDie;
+  fel.devOn.checked = devMode;
+  renderDeck();
+  renderTruth();
+  renderSecrets();
+  renderFateLog();
+  renderPrompts();
+}
+
+function fateTime(at) {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return "";
+  const locale = lang === "ru" ? "ru-RU" : "en-GB";
+  const time = date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  if (date.toDateString() === new Date().toDateString()) return time;
+  return `${date.toLocaleDateString(locale, { day: "2-digit", month: "2-digit" })} ${time}`;
+}
+
+function renderFateLog() {
+  const list = fate.logChat === state.chatId ? fate.log : [];
+  if (!list.length) {
+    const empty = document.createElement("div");
+    empty.className = "kulisy-hint";
+    empty.textContent = fate.logError ? ft("log_error") : fate.logChat === state.chatId ? ft("log_empty") : "";
+    fel.log.replaceChildren(empty);
+    return;
+  }
+  fel.log.replaceChildren(
+    ...list.slice(0, FATE_LOG_MAX).map((item) => {
+      if (item.key === "deck") return deckLogRow(item);
+      if (item.key === "truth") return truthLogRow(item);
+      const f = item.f;
+      const secret = f.s === 1;
+      const row = document.createElement(secret ? "button" : "div");
+      row.className = "kulisy-fate-row" + (secret ? " is-secret" : "");
+      const time = document.createElement("span");
+      time.className = "kulisy-fate-time";
+      time.textContent = fateTime(item.at);
+      const what = document.createElement("span");
+      what.className = "kulisy-fate-what";
+      const who = f.who ? (state.names[f.who] ? shortName(f.who) : "?") : ft("me");
+      what.textContent = `${secret ? "🔒" : "🎲"} ${who} · ${ft(f.d).toLowerCase()}`;
+      if (!secret) {
+        const result = document.createElement("b");
+        result.textContent = `${f.r} — ${ft(f.o)}`;
+        what.append(" · ", result);
+      }
+      row.append(time, what);
+      if (secret || f.s === 2) {
+        const sub = document.createElement("span");
+        sub.className = "kulisy-fate-sub";
+        sub.textContent = ft(secret ? "log_secret" : "log_was_secret");
+        row.append(sub);
+      }
+      if (secret) {
+        row.type = "button";
+        row.addEventListener("click", () => void revealFate(item));
+      }
+      return row;
+    }),
+  );
+}
+
+async function loadFateLog() {
+  const chatId = state.chatId;
+  if (!chatId) return;
+  const seq = ++fate.logSeq;
+  try {
+    const messages = await api(chatPath(chatId, "/messages?limit=500"));
+    if (seq !== fate.logSeq || chatId !== state.chatId) return;
+    await healFateSwipes(chatId, messages); // older regenerated rolls, from before 0.9.6
+    if (seq !== fate.logSeq || chatId !== state.chatId) return;
+    const log = [];
+    for (const m of Array.isArray(messages) ? messages : []) {
+      const extra = parseMaybeJson(m.extra, {}) || {};
+      const kulisy = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : {};
+      const at = msTime(m.createdAt);
+      const f = kulisy.fate;
+      if (f && FATE_EDGES[f.d] && FATE_OUTCOMES.includes(f.o)) log.push({ id: m.id, at, key: "fate", f, extra });
+      const k = kulisy.deck;
+      if (k && Array.isArray(k.c) && k.c.length) log.push({ id: m.id, at, key: "deck", f: k, extra });
+      const tr = kulisy.truth;
+      if (tr && TRUTH_OUTCOMES.includes(tr.o)) log.push({ id: m.id, at, key: "truth", f: tr, extra });
+    }
+    log.sort((a, b) => b.at - a.at);
+    fate.log = log;
+    fate.logChat = chatId;
+    fate.logError = false;
+    setSecretStart(chatId, messages);
+  } catch (error) {
+    if (seq !== fate.logSeq) return;
+    fate.logError = true;
+    marinara.log.warn("Could not read the roll log", error);
+  }
+  renderFateLog();
+}
+
+function scheduleFateLog() {
+  if (!state.open || page !== "log") return;
+  if (fate.logTimer !== null) marinara.clearTimeout(fate.logTimer);
+  fate.logTimer = marinara.setTimeout(() => {
+    fate.logTimer = null;
+    void loadFateLog();
+  }, 600);
+}
+
+// A drawn hand in the log: the card played (or "couldn't tell"), the hand under it; secret ones open on a tap.
+function deckLogRow(item) {
+  const f = item.f;
+  const secret = f.s === 1;
+  const row = document.createElement(secret ? "button" : "div");
+  row.className = "kulisy-fate-row" + (secret ? " is-secret" : "");
+  const time = document.createElement("span");
+  time.className = "kulisy-fate-time";
+  time.textContent = fateTime(item.at);
+  const what = document.createElement("span");
+  what.className = "kulisy-fate-what";
+  what.textContent = `${secret ? "🔒" : "🃏"} ${ft(f.a ? "log_deck_auto" : "log_deck")}`;
+  const played = typeof f.p === "number" && f.p >= 0 ? f.c[f.p] : "";
+  if (!secret) {
+    if (played) {
+      const result = document.createElement("b");
+      result.textContent = played;
+      what.append(" · ", result);
+    } else {
+      what.append(` · ${ft("log_deck_unknown")}`);
+    }
+  }
+  row.append(time, what);
+  const sub = [];
+  if (secret) sub.push(ft("log_deck_secret"));
+  else if (f.c.length > 1) sub.push(ft("log_deck_from", { list: f.c.join(" · ") }));
+  if (f.s === 2) sub.push(ft("log_was_secret"));
+  if (sub.length) {
+    const node = document.createElement("span");
+    node.className = "kulisy-fate-sub";
+    node.textContent = sub.join(" · ");
+    row.append(node);
+  }
+  if (secret) {
+    row.type = "button";
+    row.addEventListener("click", () => void revealFate(item));
+  }
+  return row;
+}
+
+async function revealFate(item) {
+  const chatId = state.chatId;
+  const key = item.key || "fate";
+  const kulisy = item.extra.kulisy && typeof item.extra.kulisy === "object" ? item.extra.kulisy : {};
+  const next = { ...kulisy, [key]: { ...item.f, s: 2 } };
+  item.f = next[key];
+  item.extra = { ...item.extra, kulisy: next };
+  renderFateLog();
+  try {
+    await api(chatPath(chatId, `/messages/${encodeURIComponent(item.id)}/extra`), {
+      method: "PATCH",
+      body: JSON.stringify({ kulisy: next }),
+    });
+    patchCachedExtra(chatId, item.id, item.extra);
+    scheduleBadges();
+  } catch (error) {
+    marinara.log.warn("Could not reveal the roll", error);
+    scheduleFateLog();
+  }
+}
+
+// ---- the event deck (0.9.7): the user's own cards for a game, drawn by a tap ----
+// Whose deck: a chat in a folder plays its folder's deck, so a game's scenes share their cards and their "played" marks;
+// Roleplay and Conversation folders of the same name (one game in both modes) share it too. A chat outside folders has its own.
+// The cards live in Offstage's storage on the server (every device sees them): "deck:n:<folder name>" or "deck:c:<chat id>"
+// -> { cards: [{ id, t, tone, used }] }; the scene's tone is the chat's own, metadata kulisyDeck { tone }. "Draw" takes up to
+// three unplayed cards of the scene's tone; they wait for the next reply in this chat and reach the model inside Marinara's
+// generation guide — "pick the one that fits best". No extra request to the model, and a regenerate replays the same guide.
+// Which card was played is guessed from the reply's words and marked played (the list lets the user fix it). The draw is kept
+// on the reply (extra.kulisy.deck { c: [texts], p: index | -1, s }) and shown in the log only, never under the message.
+
+const DECK_TONES = ["cozy", "tense", "danger"];
+const DECK_DRAW = 3;
+const DECK_MAX = 150;
+// The starter set: a deck nobody has written yet starts with it (Leah 18.10); emptied, it stays empty. Fixed ids, so the
+// played marks find their card until the deck is first saved.
+const DECK_STARTER = {
+  ru: {
+    cozy: [
+      "Начался дождь",
+      "Порыв ветра",
+      "Что-то упало и разбилось",
+      "Вдалеке заиграла музыка",
+      "Запахло чем-то вкусным",
+      "Кто-то неподалёку громко рассмеялся",
+      "Стало заметно холоднее",
+      "Пролился напиток",
+      "Мимо пробежала кошка",
+      "Послышались чьи-то шаги",
+    ],
+    tense: [
+      "Пришло письмо",
+      "Неожиданный гость",
+      "Кто-то проговорился о том, что скрывал",
+      "Пропала нужная вещь",
+      "Нашлась вещь, которую давно потеряли",
+      "Кто-то подслушал разговор",
+      "Пришли новости издалека",
+      "Старый знакомый появился в неожиданном месте",
+      "Кто-то просит о помощи",
+      "Планы срываются в последний момент",
+    ],
+    danger: [
+      "Погас свет",
+      "Пожар",
+      "Кто-то ранен",
+      "Нападение",
+      "Раздался крик о помощи",
+      "Кто-то исчез",
+      "Рядом что-то рушится",
+      "Разыгралась буря, путь отрезан",
+      "Раскрылось предательство",
+      "Погоня",
+    ],
+  },
+  en: {
+    cozy: [
+      "It starts to rain",
+      "A gust of wind",
+      "Something falls and breaks",
+      "Music starts somewhere in the distance",
+      "Something smells delicious",
+      "Someone nearby laughs out loud",
+      "It gets noticeably colder",
+      "A drink gets spilled",
+      "A cat runs past",
+      "Footsteps can be heard",
+    ],
+    tense: [
+      "A letter arrives",
+      "An unexpected guest",
+      "Someone lets slip what they were hiding",
+      "Something needed goes missing",
+      "Something lost long ago turns up",
+      "Someone overhears the conversation",
+      "News arrives from far away",
+      "An old acquaintance turns up in an unexpected place",
+      "Someone asks for help",
+      "Plans fall apart at the last moment",
+    ],
+    danger: [
+      "The lights go out",
+      "A fire",
+      "Someone is hurt",
+      "An attack",
+      "A cry for help",
+      "Someone disappears",
+      "Something collapses nearby",
+      "A storm breaks out and cuts off the way",
+      "A betrayal comes to light",
+      "A chase",
+    ],
+  },
+};
+function starterDeck() {
+  const set = DECK_STARTER[lang] || DECK_STARTER.en;
+  const cards = [];
+  for (const tone of DECK_TONES) set[tone].forEach((t, i) => cards.push({ id: `s${tone[0]}${i + 1}`, t, tone, used: 0 }));
+  return cards;
+}
+const DECK_TEXT_MAX = 200;
+// which size lists of the card list are unfolded — each device remembers its own
+const DECK_GROUPS_KEY = "kulisy-deck-groups";
+function loadDeckGroups() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DECK_GROUPS_KEY) || "[]");
+    return new Set(Array.isArray(saved) ? saved.filter((t) => DECK_TONES.includes(t)) : []);
+  } catch {
+    return new Set();
+  }
+}
+function saveDeckGroups() {
+  try {
+    localStorage.setItem(DECK_GROUPS_KEY, JSON.stringify([...deck.groups]));
+  } catch {}
+}
+const deck = {
+  groups: loadDeckGroups(), // tones whose card list is unfolded
+  chatId: null, // the chat deck.data belongs to
+  data: { tone: "any", cards: [] },
+  folder: "", // the folder whose deck it is ("" - the chat's own)
+  more: false, // "more ⋯" is open: Shuffle, Remove all
+  adding: false, // tone whose list shows the new card's form ("+ New card" was tapped), or false
+  openCard: null, // id of the card opened in the list
+  formTone: "cozy",
+  formUsed: false,
+  bulk: false, // "Paste a list" is open
+  undo: null, // { chatId, cards, pending } - what "Remove all cards" took; "Bring back" until the list closes
+  pending: null, // { chatId, cards: [{ id, t }], s, a, lang, at } — drawn (a: by the deck itself), waiting for a generation
+  auto: { f: "off", t: 0, skip: 0, n: 0 }, // the open chat's "draws by itself" (DECK_AUTO_KEY)
+  marks: [], // [{ chatId, p, at }] — handed to a generation, waiting for its reply
+  hands: {}, // chatId -> { m, cards, id, s, lang } — the last hand and its reply, until the user's next message
+  queue: Promise.resolve(),
+  writes: 0,
+  deleteArmed: null,
+  deleteTimer: null,
+};
+
+function sanitizeDeck(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const tone = DECK_TONES.includes(src.tone) ? src.tone : "any";
+  const cards = [];
+  const seen = new Set();
+  for (const c of Array.isArray(src.cards) ? src.cards : []) {
+    if (!c || typeof c.id !== "string" || seen.has(c.id) || typeof c.t !== "string" || !c.t.trim()) continue;
+    seen.add(c.id);
+    cards.push({
+      id: c.id,
+      t: c.t.trim().slice(0, DECK_TEXT_MAX),
+      tone: DECK_TONES.includes(c.tone) ? c.tone : "cozy",
+      used: c.used ? 1 : 0,
+    });
+    if (cards.length >= DECK_MAX) break;
+  }
+  return { tone, cards };
+}
+
+function randomIndex(n) {
+  const box = new Uint32Array(1);
+  crypto.getRandomValues(box);
+  return Math.floor((box[0] / 4294967296) * n);
+}
+function deckCardId() {
+  const box = new Uint32Array(2);
+  crypto.getRandomValues(box);
+  return `c${box[0].toString(36)}${box[1].toString(36)}`;
+}
+
+function deckHere() {
+  return deck.chatId !== null && deck.chatId === state.chatId;
+}
+function deckArmedHere() {
+  return deck.pending && deck.pending.chatId === state.chatId ? deck.pending : null;
+}
+function setDeckHint(text) {
+  fel.deckHint.textContent = text;
+  fel.deckHint.hidden = !text;
+}
+
+// Folder names, re-read at most once a minute: a deck follows its folder's name.
+const folderNames = { at: 0, map: {} };
+async function folderName(folderId) {
+  if (!folderId) return "";
+  if (!(folderId in folderNames.map) || Date.now() - folderNames.at > 60000) {
+    try {
+      const list = await api("/api/chat-folders");
+      folderNames.map = {};
+      for (const f of Array.isArray(list) ? list : []) folderNames.map[f.id] = typeof f.name === "string" ? f.name.trim() : "";
+      folderNames.at = Date.now();
+    } catch (error) {
+      marinara.log.warn("Could not read the chat folders", error);
+    }
+  }
+  return folderNames.map[folderId] || "";
+}
+async function readDeck(chatId) {
+  const chat = await api(chatPath(chatId));
+  const meta = parseMaybeJson(chat.metadata, {}) || {};
+  const folder = await folderName(chat.folderId);
+  const key = folder ? `deck:n:${folder.toLowerCase().replace(/\s+/g, " ")}` : `deck:c:${chatId}`;
+  const stored = ((await marinara.storage.get()) || {})[key];
+  const own = meta[DECK_KEY] && typeof meta[DECK_KEY] === "object" ? meta[DECK_KEY] : {};
+  // a 0.9.7 test build kept the cards in the chat itself: they are taken over until the deck has its own
+  const cards = stored && Array.isArray(stored.cards) ? stored.cards : Array.isArray(own.cards) ? own.cards : starterDeck();
+  return {
+    key,
+    folder,
+    data: sanitizeDeck({ tone: own.tone, cards }),
+    hand: sanitizeHand(meta[DECK_HAND_KEY]),
+    auto: sanitizeAuto(meta[DECK_AUTO_KEY]),
+    truthHand: sanitizeTruthHand(meta[TRUTH_HAND_KEY]),
+  };
+}
+
+// Every change is read-modify-write on the server's copy, one at a time: another device's edits and a reply's "played" mark
+// are not lost. The open chat's list changes at once; the server's copy replaces it after the last queued write.
+function deckWrite(chatId, mutate) {
+  const seq = ++deck.writes;
+  const task = deck.queue.then(async () => {
+    const { key, folder, data } = await readDeck(chatId);
+    mutate(data);
+    await marinara.storage.patch({ [key]: { cards: data.cards } });
+    await api(chatPath(chatId, "/metadata"), { method: "PATCH", body: JSON.stringify({ [DECK_KEY]: { tone: data.tone } }) });
+    if (seq === deck.writes && chatId === state.chatId && deck.chatId === chatId) {
+      deck.data = data;
+      deck.folder = folder;
+      renderDeck();
+    }
+  });
+  deck.queue = task.catch((error) => {
+    marinara.log.warn("Could not save the deck", error);
+    if (chatId === state.chatId) setDeckHint(ft("deck_save_error"));
+  });
+  return deck.queue;
+}
+function deckSave(mutate) {
+  if (!deckHere()) return;
+  mutate(deck.data);
+  renderDeck();
+  void deckWrite(deck.chatId, mutate);
+}
+// Read when a chat opens and when the card opens: the deck may have been changed in another scene or on another device.
+function loadDeck() {
+  const chatId = state.chatId;
+  if (!chatId) return;
+  deck.queue = deck.queue.then(async () => {
+    const seq = deck.writes;
+    try {
+      const { folder, data, hand, auto, truthHand } = await readDeck(chatId);
+      if (seq !== deck.writes || chatId !== state.chatId) return;
+      deck.data = data;
+      deck.folder = folder;
+      deck.chatId = chatId;
+      deck.auto = auto;
+      if (hand) deck.hands[chatId] = hand;
+      else delete deck.hands[chatId];
+      renderDeck();
+      if (hand) void checkDeckHand(chatId, false); // the reply may have been deleted on another device
+      if (truthHand) truth.hands[chatId] = truthHand;
+      else delete truth.hands[chatId];
+      renderTruth();
+      if (truthHand) void checkTruthHand(chatId, false);
+    } catch (error) {
+      marinara.log.warn("Could not read the deck", error);
+    }
+  });
+}
+
+function drawDeck() {
+  const error = drawDeckNow();
+  if (error) setDeckHint(error);
+}
+// -> "" when drawn, else why not
+function drawDeckNow() {
+  if (!deckHere()) return state.chatId ? ft("deck_loading") : "";
+  // a hand the deck drew by itself is secret: a tap draws over it, without a word
+  const armed = deckArmedHere();
+  if (armed && !armed.a) return ft("deck_already");
+  const cards = deck.data.cards;
+  const fresh = cards.filter((c) => !c.used);
+  const pool = fresh.filter((c) => deck.data.tone === "any" || c.tone === deck.data.tone);
+  if (!pool.length) {
+    if (!cards.length) return ft("deck_empty");
+    if (!fresh.length) return ft("deck_spent");
+    return ft("deck_no_tone", { tone: ft(`tone_${deck.data.tone}`) });
+  }
+  const picked = [];
+  while (picked.length < DECK_DRAW && pool.length) picked.push(pool.splice(randomIndex(pool.length), 1)[0]);
+  deck.pending = {
+    chatId: state.chatId,
+    cards: picked.map((c) => ({ id: c.id, t: c.t })),
+    s: fate.surprise ? 1 : 0,
+    lang,
+    at: Date.now(),
+  };
+  setDeckHint("");
+  renderDeck();
+  return "";
+}
+
+function deckGuide(p) {
+  const quote = p.lang === "ru" ? (text) => `«${text}»` : (text) => `“${text}”`;
+  if (p.cards.length === 1) return ft("deck_guide_one", { list: quote(p.cards[0].t) }, p.lang);
+  return ft("deck_guide_many", { list: p.cards.map((c, i) => `${i + 1}) ${quote(c.t)}`).join("; ") }, p.lang);
+}
+
+// Which card the reply played: the share of each card's word stems found in the reply; a tie or nothing found → -1.
+function deckStems(text) {
+  const words = String(text).toLowerCase().replace(/ё/g, "е").match(/\p{L}{4,}/gu) || [];
+  return [...new Set(words.map((w) => (w.length <= 5 ? w.slice(0, w.length - 1) : w.slice(0, Math.min(6, w.length - 2)))))];
+}
+function guessDeckCard(cards, reply) {
+  if (cards.length === 1) return 0;
+  const hay = String(reply).toLowerCase().replace(/ё/g, "е");
+  let best = -1;
+  let bestScore = 0;
+  let tie = false;
+  cards.forEach((card, i) => {
+    const stems = deckStems(card.t);
+    if (!stems.length) return;
+    const score = stems.filter((stem) => hay.includes(stem)).length / stems.length;
+    if (score > bestScore) {
+      best = i;
+      bestScore = score;
+      tie = false;
+    } else if (score > 0 && score === bestScore) {
+      tie = true;
+    }
+  });
+  return tie ? -1 : best;
+}
+
+// The draw goes on the first reply after it; the played card is marked in the deck.
+async function markDeckReplies(chatId) {
+  const due = deck.marks.filter((m) => m.chatId === chatId);
+  if (!due.length) return;
+  deck.marks = deck.marks.filter((m) => m.chatId !== chatId);
+  try {
+    const messages = await api(chatPath(chatId, "/messages?limit=12"));
+    const list = Array.isArray(messages) ? messages : [];
+    for (const mark of due) {
+      const replies = list
+        .filter((m) => m.role === "assistant" && msTime(m.createdAt) >= mark.at - 2000)
+        .sort((a, b) => msTime(a.createdAt) - msTime(b.createdAt));
+      if (!replies.length) continue;
+      const target = replies[0];
+      const extra = parseMaybeJson(target.extra, {}) || {};
+      const kulisy = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : {};
+      if (kulisy.deck) continue;
+      const pick = guessDeckCard(mark.p.cards, replies.map((m) => m.content || "").join("\n"));
+      const rec = { c: mark.p.cards.map((c) => c.t), p: pick };
+      if (mark.p.s) rec.s = 1;
+      if (mark.p.a) rec.a = 1;
+      const next = { ...kulisy, deck: rec };
+      await api(chatPath(chatId, `/messages/${encodeURIComponent(target.id)}/extra`), {
+        method: "PATCH",
+        body: JSON.stringify({ kulisy: next }),
+      });
+      patchCachedExtra(chatId, target.id, { ...extra, kulisy: next });
+      await setDeckHand(chatId, {
+        m: target.id,
+        cards: mark.p.cards,
+        id: pick >= 0 ? mark.p.cards[pick].id : "",
+        s: mark.p.s,
+        a: mark.p.a,
+        lang: mark.p.lang,
+      });
+      if (pick >= 0) {
+        const id = mark.p.cards[pick].id;
+        if (chatId === state.chatId && deck.chatId === chatId) {
+          const card = deck.data.cards.find((c) => c.id === id);
+          if (card) card.used = 1;
+          renderDeck();
+        }
+        await deckWrite(chatId, (data) => {
+          const card = data.cards.find((c) => c.id === id);
+          if (card) card.used = 1;
+        });
+      }
+    }
+    scheduleFateLog();
+  } catch (error) {
+    marinara.log.warn("Could not mark the drawn cards on the reply", error);
+  }
+}
+
+// A hand whose reply is gone (Leah 18.10: she deleted it to call another character) was never played: its card is
+// unmarked and the same hand waits for the next reply, as a roll nobody answered does. The hand is remembered (chat
+// metadata, kulisyDeckHand) until the user's next message; a reply deleted after that stays played.
+function sanitizeHand(raw) {
+  if (!raw || typeof raw !== "object" || typeof raw.m !== "string" || !raw.m || !Array.isArray(raw.cards)) return null;
+  const cards = raw.cards
+    .filter((c) => c && typeof c.id === "string" && typeof c.t === "string")
+    .slice(0, DECK_DRAW)
+    .map((c) => ({ id: c.id, t: c.t }));
+  if (!cards.length) return null;
+  return {
+    m: raw.m,
+    cards,
+    id: typeof raw.id === "string" ? raw.id : "",
+    s: raw.s ? 1 : 0,
+    a: raw.a ? 1 : 0,
+    lang: raw.lang === "en" ? "en" : "ru",
+  };
+}
+async function setDeckHand(chatId, hand) {
+  if (hand) deck.hands[chatId] = hand;
+  else delete deck.hands[chatId];
+  try {
+    await api(chatPath(chatId, "/metadata"), { method: "PATCH", body: JSON.stringify({ [DECK_HAND_KEY]: hand || null }) });
+  } catch (error) {
+    marinara.log.warn("Could not save the last hand", error);
+  }
+}
+// newTurn: the user writes a new message — a hand whose reply is still there is done with.
+async function checkDeckHand(chatId, newTurn) {
+  const hand = deck.hands[chatId];
+  if (!hand) return;
+  let list;
+  try {
+    const messages = await api(chatPath(chatId, "/messages?limit=40"));
+    list = Array.isArray(messages) ? messages : null;
+  } catch (error) {
+    marinara.log.warn("Could not check the reply of the last hand", error);
+  }
+  if (!list || deck.hands[chatId] !== hand) return;
+  if (list.some((m) => m.id === hand.m)) {
+    if (newTurn) await setDeckHand(chatId, null);
+    return;
+  }
+  await setDeckHand(chatId, null);
+  if (hand.id) {
+    if (chatId === state.chatId && deck.chatId === chatId) {
+      const card = deck.data.cards.find((c) => c.id === hand.id);
+      if (card) card.used = 0;
+    }
+    void deckWrite(chatId, (data) => {
+      const card = data.cards.find((c) => c.id === hand.id);
+      if (card) card.used = 0;
+    });
+  }
+  if (!deck.pending) deck.pending = { chatId, cards: hand.cards, s: hand.s, a: hand.a, lang: hand.lang, at: Date.now() };
+  renderDeck();
+  scheduleFateLog();
+}
+// Requests that can end a hand: a generation, the user's message, a deleted message. For a generation the check comes
+// first (the hand may go into it); the others are checked after they are done.
+function deckHandRequest(input, init) {
+  if (!init) return null;
+  const method = String(init.method || "GET").toUpperCase();
+  if (method !== "DELETE" && (method !== "POST" || typeof init.body !== "string")) return null;
+  const path = requestPath(input);
+  const hit = path.match(/^\/api\/chats\/([^/]+)\/messages(?:\/([^/]+))?$/);
+  if (path === "/api/generate" && method === "POST") {
+    const body = JSON.parse(init.body);
+    if (!hasHand(body.chatId) || body.regenerateMessageId || body.continueMessageId || body.impersonate) return null;
+    const newTurn = typeof body.userMessage === "string" && body.userMessage.trim() !== "";
+    return { before: true, chatId: body.chatId, newTurn };
+  }
+  if (!hit || !hasHand(decodeURIComponent(hit[1]))) return null;
+  const chatId = decodeURIComponent(hit[1]);
+  if (method === "DELETE" && hit[2]) return { chatId, newTurn: false };
+  if (method === "POST" && hit[2] === "bulk-delete") return { chatId, newTurn: false };
+  if (method === "POST" && !hit[2]) {
+    const body = JSON.parse(init.body);
+    if (body.role === "user") return { chatId, newTurn: true };
+  }
+  return null;
+}
+
+// The deck draws by itself (Leah 18.10): a secret hand of the scene's tone every few of the user's messages — a range per
+// frequency, a new random gap after each event. A turn is the user's message, not a character's reply (several characters
+// may answer one message). Counted from the server's own list: messages newer than the last event (t, the server's time of
+// the newest message then; skip — the user's message that came with that very request), the whisper's hidden half not
+// counted. Kept in the chat (DECK_AUTO_KEY), so every device counts the same. A hand drawn by tap is an event too: the
+// count starts again.
+const DECK_AUTO = { rare: [10, 15], some: [6, 10], often: [3, 6] };
+const DECK_AUTO_SCAN = 100;
+function autoGap(f) {
+  const [lo, hi] = DECK_AUTO[f];
+  return lo + randomIndex(hi - lo + 1);
+}
+function sanitizeAuto(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const f = Object.hasOwn(DECK_AUTO, src.f) ? src.f : "off";
+  if (f === "off") return { f, t: 0, skip: 0, n: 0 };
+  const [lo, hi] = DECK_AUTO[f];
+  const n = Number.isInteger(src.n) && src.n >= lo && src.n <= hi ? src.n : autoGap(f);
+  return { f, t: Number.isFinite(src.t) && src.t > 0 ? src.t : 0, skip: src.skip ? 1 : 0, n };
+}
+function autoFrom(f, list, mine) {
+  const last = list.length ? list[list.length - 1] : null;
+  return { f, t: last ? msTime(last.createdAt) || 0 : 0, skip: mine ? 1 : 0, n: autoGap(f) };
+}
+async function saveDeckAuto(chatId, auto) {
+  await api(chatPath(chatId, "/metadata"), { method: "PATCH", body: JSON.stringify({ [DECK_AUTO_KEY]: auto }) });
+  if (chatId === state.chatId && deck.chatId === chatId) {
+    deck.auto = auto;
+    renderDeck();
+  }
+}
+function setDeckAuto(f) {
+  if (!deckHere()) return;
+  const chatId = deck.chatId;
+  deck.auto = { ...deck.auto, f };
+  renderDeck();
+  deck.queue = deck.queue
+    .then(async () => {
+      if (f === "off") return saveDeckAuto(chatId, sanitizeAuto(null));
+      const messages = await api(chatPath(chatId, "/messages?limit=1"));
+      await saveDeckAuto(chatId, autoFrom(f, Array.isArray(messages) ? messages : [], false));
+    })
+    .catch((error) => {
+      marinara.log.warn("Could not save the deck's own draws", error);
+      if (chatId === state.chatId) setDeckHint(ft("deck_save_error"));
+    });
+}
+// A new generation (not a regenerate, continue, impersonate) — the deck may draw by itself before it goes.
+function deckAutoRequest(input, init) {
+  if (!init || typeof init.body !== "string" || String(init.method || "GET").toUpperCase() !== "POST") return null;
+  if (requestPath(input) !== "/api/generate") return null;
+  const body = JSON.parse(init.body);
+  if (typeof body.chatId !== "string" || body.regenerateMessageId || body.continueMessageId || body.impersonate) return null;
+  return { chatId: body.chatId, mine: typeof body.userMessage === "string" && body.userMessage.trim() !== "" };
+}
+// one of a whisper's two messages that is not the turn: "what everyone sees" (kind "all"), or a whisper from before
+// 0.9.21 (its unmarked "everyone" line was the turn)
+function whisperHalf(m) {
+  const extra = parseMaybeJson(m.extra, {}) || {};
+  const kulisy = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : null;
+  return !!kulisy && (kulisy.kind === "all" || (kulisy.kind === "whisper" && !kulisy.turn));
+}
+async function deckAutoCheck(req) {
+  try {
+    const chat = await api(chatPath(req.chatId));
+    const auto = sanitizeAuto((parseMaybeJson(chat.metadata, {}) || {})[DECK_AUTO_KEY]);
+    if (auto.f === "off") return;
+    const messages = await api(chatPath(req.chatId, `/messages?limit=${DECK_AUTO_SCAN}`));
+    const list = Array.isArray(messages) ? messages : [];
+    const p = deck.pending;
+    if (p) {
+      if (p.chatId === req.chatId && !p.a) await saveDeckAuto(req.chatId, autoFrom(auto.f, list, req.mine));
+      return;
+    }
+    let turns = req.mine ? 1 : 0;
+    for (const m of list) if (m.role === "user" && msTime(m.createdAt) > auto.t && !whisperHalf(m)) turns += 1;
+    if (turns - auto.skip < auto.n) return;
+    const { data } = await readDeck(req.chatId);
+    const pool = data.cards.filter((c) => !c.used && (data.tone === "any" || c.tone === data.tone));
+    if (!pool.length) return; // nothing of this size left: it waits for the next turn
+    const picked = [];
+    while (picked.length < DECK_DRAW && pool.length) picked.push(pool.splice(randomIndex(pool.length), 1)[0]);
+    if (deck.pending) return;
+    deck.pending = { chatId: req.chatId, cards: picked.map((c) => ({ id: c.id, t: c.t })), s: 1, a: 1, lang, at: Date.now() };
+    await saveDeckAuto(req.chatId, autoFrom(auto.f, list, req.mine));
+  } catch (error) {
+    marinara.log.warn("Could not let the deck draw by itself", error);
+  }
+}
+
+// The fetch wrapper hands the drawn cards to the next generation of their chat (not a regenerate: Marinara replays the
+// guide itself; not continue / impersonate).
+function deckGenerate(init, p) {
+  const body = JSON.parse(init.body);
+  if (body.chatId !== p.chatId || body.regenerateMessageId || body.continueMessageId || body.impersonate) return null;
+  const guide = deckGuide(p);
+  const own = typeof body.generationGuide === "string" && body.generationGuide.trim() ? body.generationGuide : "";
+  body.generationGuide = own ? `${own}\n\n${guide}` : guide;
+  if (!body.generationGuideSource) body.generationGuideSource = "guide";
+  deck.pending = null;
+  deck.marks.push({ chatId: p.chatId, p, at: Date.now() });
+  renderDeck();
+  return { ...init, body: JSON.stringify(body) };
+}
+function restoreDeck(p) {
+  deck.marks = deck.marks.filter((m) => m.p !== p);
+  if (!deck.pending) deck.pending = p;
+  renderDeck();
+}
+function watchDeck(request, p, t) {
+  if (p || t) {
+    const restore = () => {
+      if (p) restoreDeck(p);
+      if (t) restoreTruth(t);
+    };
+    request.then(
+      (response) => {
+        if (!response.ok) restore();
+      },
+      restore,
+    );
+  }
+  return request;
+}
+
+// ---- truth or lie (0.9.12, Fate p. 6): a secret roll for the next reply ----
+// Leah 18.10: the player neither picks nor sees the odds — the point is not knowing what the AI slips in. A tap rolls the
+// truth or a lie (even odds; a half-truth was dropped — DeepSeek played it as a plain lie) for the next reply in this chat, whoever gives it (in manual order she calls
+// the character herself; a one-character chat answers by itself). It reaches the model inside Marinara's guide, as the
+// deck's cards do; the reply keeps it (extra.kulisy.truth { o, who, s }), shown in the log only and secret until a tap
+// (s: 2). A deleted reply arms a fresh roll for the next one (0.9.14, Leah 18.10; the last reply is kept in TRUTH_HAND_KEY
+// until the user's next message, as the deck's hand); a failed generation gives the same roll back; a regenerate replays
+// the same guide, and SWIPE_CARRY moves the record to the new swipe.
+const TRUTH_OUTCOMES = ["truth", "lie"];
+const truth = {
+  pending: null, // { chatId, o, lang, at } — rolled, waiting for a generation
+  marks: [], // [{ chatId, p, at }] — handed to a generation, waiting for its reply
+  hands: {}, // chatId -> { m, o, lang } — the last roll and its reply, until the user's next message
+};
+function truthArmedHere() {
+  return truth.pending && truth.pending.chatId === state.chatId ? truth.pending : null;
+}
+function setTruthHint(text) {
+  fel.truthHint.textContent = text;
+  fel.truthHint.hidden = !text;
+}
+function renderTruth() {
+  const asked = !!truthArmedHere();
+  fel.truthRoll.replaceChildren(
+    fateChip(`⚖️ ${ft("move_truth")}`, asked, () => {
+      if (!asked) return rollTruth();
+      truth.pending = null;
+      setTruthHint("");
+      renderTruth();
+    }),
+  );
+  fel.truthArmed.hidden = !truthArmedHere();
+  paintDie();
+}
+function rollTruth() {
+  if (!state.chatId) return;
+  if (truthArmedHere()) return setTruthHint(ft("truth_already"));
+  truth.pending = { chatId: state.chatId, o: TRUTH_OUTCOMES[randomIndex(TRUTH_OUTCOMES.length)], lang, at: Date.now() };
+  setTruthHint("");
+  renderTruth();
+}
+function truthGenerate(init, p) {
+  const body = JSON.parse(init.body);
+  if (body.chatId !== p.chatId || body.regenerateMessageId || body.continueMessageId || body.impersonate) return null;
+  const guide = ft(`truth_guide_${p.o}`, {}, p.lang);
+  const own = typeof body.generationGuide === "string" && body.generationGuide.trim() ? body.generationGuide : "";
+  body.generationGuide = own ? `${own}\n\n${guide}` : guide;
+  if (!body.generationGuideSource) body.generationGuideSource = "guide";
+  truth.pending = null;
+  truth.marks.push({ chatId: p.chatId, p, at: Date.now() });
+  renderTruth();
+  return { ...init, body: JSON.stringify(body) };
+}
+function restoreTruth(p) {
+  truth.marks = truth.marks.filter((m) => m.p !== p);
+  if (!truth.pending) truth.pending = p;
+  renderTruth();
+}
+// The roll goes on the first reply after it.
+async function markTruthReplies(chatId) {
+  const due = truth.marks.filter((m) => m.chatId === chatId);
+  if (!due.length) return;
+  truth.marks = truth.marks.filter((m) => m.chatId !== chatId);
+  try {
+    const messages = await api(chatPath(chatId, "/messages?limit=12"));
+    const list = Array.isArray(messages) ? messages : [];
+    for (const mark of due) {
+      const target = list
+        .filter((m) => m.role === "assistant" && msTime(m.createdAt) >= mark.at - 2000)
+        .sort((a, b) => msTime(a.createdAt) - msTime(b.createdAt))[0];
+      if (!target) continue;
+      const extra = parseMaybeJson(target.extra, {}) || {};
+      const kulisy = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : {};
+      if (kulisy.truth) continue;
+      const next = { ...kulisy, truth: { o: mark.p.o, who: target.characterId || "", s: 1 } };
+      await api(chatPath(chatId, `/messages/${encodeURIComponent(target.id)}/extra`), {
+        method: "PATCH",
+        body: JSON.stringify({ kulisy: next }),
+      });
+      patchCachedExtra(chatId, target.id, { ...extra, kulisy: next });
+      await setTruthHand(chatId, { m: target.id, o: mark.p.o, lang: mark.p.lang });
+    }
+    scheduleFateLog();
+  } catch (error) {
+    marinara.log.warn("Could not mark the truth roll on the reply", error);
+  }
+}
+function sanitizeTruthHand(raw) {
+  if (!raw || typeof raw !== "object" || typeof raw.m !== "string" || !raw.m || !TRUTH_OUTCOMES.includes(raw.o)) return null;
+  return { m: raw.m, o: raw.o, lang: raw.lang === "en" ? "en" : "ru" };
+}
+async function setTruthHand(chatId, hand) {
+  if (hand) truth.hands[chatId] = hand;
+  else delete truth.hands[chatId];
+  try {
+    await api(chatPath(chatId, "/metadata"), { method: "PATCH", body: JSON.stringify({ [TRUTH_HAND_KEY]: hand || null }) });
+  } catch (error) {
+    marinara.log.warn("Could not save the last truth roll", error);
+  }
+}
+// newTurn: the user writes a new message — a roll whose reply is still there is done with.
+async function checkTruthHand(chatId, newTurn) {
+  const hand = truth.hands[chatId];
+  if (!hand) return;
+  let list;
+  try {
+    const messages = await api(chatPath(chatId, "/messages?limit=40"));
+    list = Array.isArray(messages) ? messages : null;
+  } catch (error) {
+    marinara.log.warn("Could not check the reply of the last truth roll", error);
+  }
+  if (!list || truth.hands[chatId] !== hand) return;
+  if (list.some((m) => m.id === hand.m)) {
+    if (newTurn) await setTruthHand(chatId, null);
+    return;
+  }
+  await setTruthHand(chatId, null);
+  if (!truth.pending) truth.pending = { chatId, o: TRUTH_OUTCOMES[randomIndex(TRUTH_OUTCOMES.length)], lang: hand.lang, at: Date.now() };
+  renderTruth();
+  scheduleFateLog();
+}
+function hasHand(chatId) {
+  return !!(deck.hands[chatId] || truth.hands[chatId]);
+}
+async function checkHands(chatId, newTurn) {
+  await checkDeckHand(chatId, newTurn);
+  await checkTruthHand(chatId, newTurn);
+}
+function truthLogRow(item) {
+  const f = item.f;
+  const secret = f.s === 1;
+  const row = document.createElement(secret ? "button" : "div");
+  row.className = "kulisy-fate-row" + (secret ? " is-secret" : "");
+  const time = document.createElement("span");
+  time.className = "kulisy-fate-time";
+  time.textContent = fateTime(item.at);
+  const what = document.createElement("span");
+  what.className = "kulisy-fate-what";
+  const who = f.who && state.names[f.who] ? ` · ${shortName(f.who)}` : "";
+  what.textContent = `${secret ? "🔒" : "🎭"} ${ft("log_truth")}${who}`;
+  if (!secret) {
+    const result = document.createElement("b");
+    result.textContent = ft(`truth_${f.o}`);
+    what.append(" · ", result);
+  }
+  row.append(time, what);
+  if (secret || f.s === 2) {
+    const sub = document.createElement("span");
+    sub.className = "kulisy-fate-sub";
+    sub.textContent = ft(secret ? "log_secret" : "log_was_secret");
+    row.append(sub);
+  }
+  if (secret) {
+    row.type = "button";
+    row.addEventListener("click", () => void revealFate(item));
+  }
+  return row;
+}
+
+// ---- life between scenes (0.9.15): what happened to a character off-screen ----
+// "What happened to them?" makes up a short private story of one character's time off-screen: one request to the chat's own
+// connection through Marinara's /api/generate/raw (it writes nothing to the chat). The model reads the card, the summary and
+// the scene's last messages (those the character missed are marked). The story's kind is a secret roll (good / bad / a
+// meeting / a secret), its size the deck's "Event size" of this chat ("Any" rolls it too), how long ago the user picks
+// ("recently / long ago" while the chat has no user message yet). The story becomes a lorebook entry only that character
+// gets (constant, include -> them; a member of a cast card: the card, the member in the description), at the quiet depth,
+// with a line on how to play it (visible traces at once, the story only when asked or when it fits).
+// The book belongs to the game, like the deck: "Secrets — <folder>" is shared by every chat in folders of that name (Roleplay
+// and Conversation alike); Offstage puts it into each chat's metadata.activeLorebookIds (how Marinara adds a book to a chat)
+// and takes off another game's secrets book (a chat moved to another folder). A chat outside folders has its own. Not a
+// character's book (characterIds): the secret would follow the card into other games.
+// For the user it is a sealed envelope in the Fate card: a tap reads it, "Forget" erases it (the entry too). Storage:
+// "secrets:n:<folder>" | "secrets:c:<chatId>" -> { book, items: [{ id (entry id), who, name, len, kind, size, at, open, t }] }.
+const SECRET_KINDS = ["good", "bad", "meet", "secret"];
+const SECRET_LENS = ["hours", "day", "week"];
+const SECRET_START_LENS = ["recent", "long"];
+const SECRET_KEEP = 3; // more than this per character: the card offers to forget the oldest
+const SECRET_CONTEXT = 20; // the scene's last messages the model reads
+const SECRET_TEXT_MAX = 2000;
+const SECRET_ABOUT_MAX = 300; // the user's hint
+const SECRET_ARRIVAL_MAX = 600;
+// The book has no token budget of its own (0 = none): Marinara spends a book's budget on the whole chat's scan before it
+// hands each character their entries, so other characters' secrets would crowd this one's out (default 2048).
+const SECRET_BOOK_BUDGET = 0;
+const secrets = {
+  chatId: null, // the chat secrets.data was read for
+  folder: "",
+  data: { book: "", items: [] },
+  who: null, // whose story the form asks for
+  step: null, // the row whose "What happened to them?" form is open
+  len: null,
+  kind: "any", // "any" = the secret roll, or one of SECRET_KINDS
+  size: "deck", // "deck" = the deck's event size of this chat, or one of DECK_TONES
+  start: null, // id of the open chat while it has no user message yet
+  busy: false, // a story is being written
+  open: null, // id of the envelope being read
+  forgetArmed: null,
+  forgetTimer: null,
+  queue: Promise.resolve(),
+  writes: 0,
+  offer: null, // { chatId, id } — "What happened to them?" under Who's here, after "here"
+};
+
+function secretsStart() {
+  return !!state.chatId && secrets.start === state.chatId;
+}
+function setSecretStart(chatId, messages) {
+  const begun = (Array.isArray(messages) ? messages : []).some((m) => m.role === "user");
+  const was = secretsStart();
+  if (!begun) secrets.start = chatId;
+  else if (secrets.start === chatId) secrets.start = null;
+  if (chatId === state.chatId && was !== secretsStart()) {
+    secrets.len = null;
+    renderSecrets();
+  }
+}
+function setSecretNote(text, kind = "") {
+  fel.secretNote.textContent = text;
+  fel.secretNote.dataset.kind = kind;
+  fel.secretNote.hidden = !text;
+}
+function sanitizeSecrets(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const items = [];
+  for (const it of Array.isArray(src.items) ? src.items : []) {
+    if (!it || typeof it.id !== "string" || typeof it.who !== "string" || typeof it.t !== "string") continue;
+    items.push({
+      id: it.id,
+      who: it.who,
+      name: typeof it.name === "string" ? it.name : "",
+      len: [...SECRET_LENS, ...SECRET_START_LENS].includes(it.len) ? it.len : "day",
+      kind: SECRET_KINDS.includes(it.kind) ? it.kind : "secret",
+      size: DECK_TONES.includes(it.size) ? it.size : "cozy",
+      at: Number(it.at) || 0,
+      open: it.open ? 1 : 0,
+      t: it.t,
+      ...(typeof it.arr === "string" && it.arr ? { arr: it.arr } : {}),
+      ...(typeof it.arrId === "string" && typeof it.arrBook === "string" ? { arrId: it.arrId, arrBook: it.arrBook } : {}),
+    });
+  }
+  return { book: typeof src.book === "string" ? src.book : "", items };
+}
+function gameKey(folder) {
+  return folder.toLowerCase().replace(/\s+/g, " ");
+}
+async function readSecrets(chatId) {
+  const chat = await api(chatPath(chatId));
+  const folder = await folderName(chat.folderId);
+  const key = folder ? `secrets:n:${gameKey(folder)}` : `secrets:c:${chatId}`;
+  const all = (await marinara.storage.get()) || {};
+  return { chat, folder, key, all, data: sanitizeSecrets(all[key]) };
+}
+// The game's book goes into the chat's lorebooks; another game's secrets book is taken off.
+async function attachSecrets(chatId, chat, all, book) {
+  const meta = parseMaybeJson(chat.metadata, {}) || {};
+  const active = Array.isArray(meta.activeLorebookIds) ? meta.activeLorebookIds.filter((id) => typeof id === "string") : [];
+  const ours = new Set();
+  for (const [key, value] of Object.entries(all || {})) {
+    if (key.startsWith("secrets:") && value && typeof value.book === "string" && value.book) ours.add(value.book);
+  }
+  const next = active.filter((id) => id === book || !ours.has(id));
+  if (book && !next.includes(book)) next.push(book);
+  if (next.length === active.length && next.every((id, i) => id === active[i])) return;
+  await api(chatPath(chatId, "/metadata"), { method: "PATCH", body: JSON.stringify({ activeLorebookIds: next }) });
+  refreshChatDetail(chatId);
+}
+// A new book: every chat of the game gets it at once (a chat opened later gets it from loadSecrets).
+async function attachSecretsEverywhere(chatId, ctx, book) {
+  const targets = [chatId];
+  if (ctx.folder) {
+    try {
+      const list = await api("/api/chats");
+      for (const c of Array.isArray(list) ? list : []) {
+        if (!c || !c.folderId || targets.includes(c.id)) continue;
+        if (gameKey(await folderName(c.folderId)) === gameKey(ctx.folder)) targets.push(c.id);
+      }
+    } catch (error) {
+      marinara.log.warn("Could not read the chats of the folder", error);
+    }
+  }
+  for (const id of targets) {
+    try {
+      await attachSecrets(id, id === chatId ? ctx.chat : await api(chatPath(id)), ctx.all, book);
+    } catch (error) {
+      marinara.log.warn("Could not add the secrets to a chat", error);
+    }
+  }
+}
+// Read when a chat opens and when the card opens; the chat gets its game's book. Envelopes whose entries were deleted
+// in Marinara's lorebook editor go too.
+function loadSecrets() {
+  const chatId = state.chatId;
+  if (!chatId) return Promise.resolve();
+  secrets.queue = secrets.queue.then(async () => {
+    const seq = secrets.writes;
+    try {
+      const { chat, folder, all, data } = await readSecrets(chatId);
+      let gone = null;
+      if (data.book) {
+        try {
+          const book = await api(`/api/lorebooks/${encodeURIComponent(data.book)}`);
+          if (Number(book && book.tokenBudget) !== SECRET_BOOK_BUDGET) {
+            await api(`/api/lorebooks/${encodeURIComponent(data.book)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ tokenBudget: SECRET_BOOK_BUDGET }),
+            });
+          }
+          const entries = await api(`/api/lorebooks/${encodeURIComponent(data.book)}/entries`);
+          const ids = new Set((Array.isArray(entries) ? entries : []).map((e) => e.id));
+          gone = data.items.filter((it) => !ids.has(it.id)).map((it) => it.id);
+        } catch (error) {
+          if (!String(error.message).startsWith("404")) throw error;
+          gone = "book";
+        }
+      }
+      await attachSecrets(chatId, chat, all, gone === "book" ? "" : data.book);
+      if (seq !== secrets.writes || chatId !== state.chatId) return;
+      secrets.chatId = chatId;
+      secrets.folder = folder;
+      secrets.data = data;
+      renderSecrets();
+      if (gone === "book" || (gone && gone.length)) {
+        void secretsWrite(chatId, (d) => {
+          if (gone === "book") {
+            d.book = "";
+            d.items = [];
+          } else {
+            d.items = d.items.filter((it) => !gone.includes(it.id));
+          }
+        });
+      }
+    } catch (error) {
+      marinara.log.warn("Could not read the secrets", error);
+    }
+  });
+  return secrets.queue;
+}
+// Read-modify-write on the server's copy, one at a time (another device may have changed it).
+function secretsWrite(chatId, mutate) {
+  const seq = ++secrets.writes;
+  const task = secrets.queue.then(async () => {
+    const ctx = await readSecrets(chatId);
+    await mutate(ctx.data, ctx);
+    await marinara.storage.patch({ [ctx.key]: ctx.data });
+    if (seq === secrets.writes && chatId === state.chatId) {
+      secrets.chatId = chatId;
+      secrets.folder = ctx.folder;
+      secrets.data = ctx.data;
+      renderSecrets();
+    }
+  });
+  secrets.queue = task.catch((error) => {
+    marinara.log.warn("Could not save the secrets", error);
+    if (chatId === state.chatId) setSecretNote(ft("secret_save_error"));
+  });
+  return task;
+}
+async function ensureSecretBook(d, ctx, code) {
+  if (d.book) {
+    try {
+      await api(`/api/lorebooks/${encodeURIComponent(d.book)}`);
+      return false;
+    } catch (error) {
+      if (!String(error.message).startsWith("404")) throw error;
+      d.book = "";
+      d.items = [];
+    }
+  }
+  const name = ctx.folder || ctx.chat.name || "";
+  const book = await api("/api/lorebooks", {
+    method: "POST",
+    body: JSON.stringify({
+      name: (name ? ft("secret_book", { name }, code) : ft("secret_book_bare", null, code)).slice(0, 200),
+      description: ft("secret_book_desc", null, code),
+      category: "uncategorized",
+      tokenBudget: SECRET_BOOK_BUDGET,
+    }),
+  });
+  d.book = book.id;
+  return true;
+}
+async function secretConnection(id) {
+  if (id && id !== "random") return id;
+  if (id !== "random") return null;
+  const list = await api("/api/connections");
+  const pool = (Array.isArray(list) ? list : []).filter((c) => String(c.useForRandom) === "true");
+  return pool.length ? pool[randomIndex(pool.length)].id : null;
+}
+function cleanStory(text) {
+  return String(text || "")
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, SECRET_TEXT_MAX);
+}
+async function secretPrompt(chatId, chat, here, who, len, kind, size, about, code) {
+  const say = (key, vars) => ft(key, vars, code);
+  const cardId = cardOf(who);
+  const name = state.names[who] || "?";
+  const parts = [];
+  const user = here.personaName || say("sp_player");
+  // /api/generate/raw resolves no macros: the card's {{user}} / {{char}} are put in here
+  const macros = (text) =>
+    text.replace(/\{\{\s*user\s*\}\}/gi, user).replace(/\{\{\s*char\s*\}\}/gi, state.names[cardId] || name);
+  const add = (title, value, max) => {
+    if (typeof value === "string" && value.trim()) parts.push(`${title}:\n${macros(value.trim()).slice(0, max)}`);
+  };
+  try {
+    const card = await api(`/api/characters/${encodeURIComponent(cardId)}`);
+    const data = parseMaybeJson(card && card.data, {}) || {};
+    add(say("sp_card", { name: state.names[cardId] || name }), data.description, 6000);
+    add(say("sp_personality"), data.personality, 2000);
+    add(say("sp_scenario"), data.scenario, 2000);
+  } catch (error) {
+    marinara.log.warn("Could not read the character card", error);
+  }
+  if (isMember(who)) parts.push(say("sp_member", { name }));
+  const meta = parseMaybeJson(chat.metadata, {}) || {};
+  add(say("sp_summary"), meta.summary, 4000);
+  const list = await api(chatPath(chatId, `/messages?limit=${SECRET_CONTEXT * 2}`));
+  const lines = [];
+  for (const m of Array.isArray(list) ? list : []) {
+    const extra = parseMaybeJson(m.extra, {}) || {};
+    if (extra.hiddenFromAI === true) continue;
+    const text = typeof m.content === "string" ? m.content.trim() : "";
+    if (!text) continue;
+    const speaker = m.characterId ? state.names[m.characterId] || "?" : m.role === "user" ? user : say("sp_narrator");
+    const unseen = Array.isArray(extra.hiddenFromAICharacterIds) && extra.hiddenFromAICharacterIds.includes(cardId);
+    const kulisy = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : {};
+    const missed = unseen && Array.isArray(kulisy.away) && kulisy.away.includes(cardId);
+    const start = Array.isArray(extra.conversationStartForCharacterIds) && extra.conversationStartForCharacterIds.includes(cardId);
+    lines.push({ unseen, missed, start, own: m.characterId === cardId, user: m.role === "user", text: `${speaker}: ${text.slice(0, 1500)}` });
+  }
+  // Entering the scene now (Roleplay only — Conversation has no place): a newcomer (Offstage's start mark, no line of their
+  // own yet) or back from "away" (missed something after their last line). Then the model also writes how they got here.
+  const lastOwn = lines.map((line) => line.own).lastIndexOf(true);
+  const newcomer = lastOwn < 0 && lines.some((line) => line.start);
+  const returned = lines.map((line) => line.missed).lastIndexOf(true) > lastOwn;
+  const awayNow = Object.prototype.hasOwnProperty.call(here.away || {}, cardId);
+  const entering = here.mode === "roleplay" && !awayNow && lines.some((line) => line.user) && (newcomer || returned);
+  // What they missed is left out, only counted (0.9.15 tests: with it marked "unseen", the story was built on it).
+  const recent = lines.slice(-SECRET_CONTEXT);
+  const seen = recent.filter((line) => !line.unseen);
+  if (seen.length) parts.push(`${say("sp_scene")}:\n${seen.map((line) => line.text).join("\n\n")}`);
+  const missed = recent.length - seen.length;
+  if (missed) parts.push(say("sp_missed", { name, n: missed }));
+  // Added mid-game, or not a word yet: the scene so far may be news to them (0.9.15 tests: an added character's story
+  // was built on the scene's plot).
+  if (recent.some((line) => line.user) && !recent.some((line) => line.own)) parts.push(say("sp_absent", { name }));
+  if (Object.prototype.hasOwnProperty.call(here.away || {}, cardId)) parts.push(say("sp_away", { name }));
+  const vars = { name, user, when: say(`sw_${len}`), kind: say(`sg_${kind}`), size: say(`ss_${size}`), length: say(`sn_${size}`) };
+  if (about) parts.push(say("sp_hint", { hint: about }));
+  const system = say("sp_system", vars) + (entering ? ` ${say("sp_arrive", vars)}` : "");
+  return {
+    entering,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: `${parts.join("\n\n")}\n\n${say("sp_ask", vars)}` },
+    ],
+  };
+}
+// The story, and under a "---" line the arrival (asked only of a character entering the scene).
+function splitStory(text, entering) {
+  const clean = cleanStory(text);
+  const parts = clean.split(/^\s*[-—–]{3,}\s*$/m);
+  if (parts.length < 2) return { story: clean, arrival: "" };
+  const story = parts[0].trim();
+  if (!story) return { story: clean, arrival: "" };
+  const arrival = entering ? parts.slice(1).join(" ").replace(/\s+/g, " ").trim().slice(0, SECRET_ARRIVAL_MAX) : "";
+  return { story, arrival };
+}
+
+// ---- the arrival: how a character entering the scene got here ----
+// An entry of this chat's "in their ear" book (the arrival is true for this scene only; the secret itself belongs to the
+// game), constant, only for them, at the quiet depth; never shown in the "in their ear" field. A new arrival replaces the
+// old one; leaving ("away") and forgetting the envelope take it off.
+function isArrivalEntry(name) {
+  return Object.keys(FATE_TEXT).some((code) => String(name || "").startsWith(FATE_TEXT[code].arrive_entry_name.split("{name}")[0]));
+}
+async function arrivalEntries(bookId, slots) {
+  const list = await api(`/api/lorebooks/${encodeURIComponent(bookId)}/entries`);
+  return (Array.isArray(list) ? list : []).filter((entry) => {
+    const ids = parseMaybeJson(entry.characterFilterIds, []) || [];
+    return isArrivalEntry(entry.name) && ids.length === 1 && slots.includes(entrySlot(ids[0], entry.description));
+  });
+}
+async function deleteEntry(bookId, entryId) {
+  try {
+    await api(`/api/lorebooks/${encodeURIComponent(bookId)}/entries/${encodeURIComponent(entryId)}`, { method: "DELETE" });
+  } catch (error) {
+    if (!String(error.message).startsWith("404")) throw error;
+  }
+}
+function saveArrival(chatId, slot, arrival, code) {
+  return earQueue(async () => {
+    if (!state.chat || state.chatId !== chatId) return null;
+    const bookId = await ensureEarLorebook(chatId);
+    for (const old of await arrivalEntries(bookId, [slot])) await deleteEntry(bookId, old.id);
+    const created = await api(`/api/lorebooks/${encodeURIComponent(bookId)}/entries`, {
+      method: "POST",
+      body: JSON.stringify({
+        lorebookId: bookId,
+        name: ft("arrive_entry_name", { name: entryTitle(slot) }, code).slice(0, 200),
+        content: ft("arrive_entry", { name: state.names[slot] || "", arrival }, code),
+        keys: [],
+        constant: true,
+        position: 2,
+        depth: earQuietDepth(),
+        role: "system",
+        characterFilterMode: "include",
+        ...entryTarget(slot),
+      }),
+    });
+    return { id: created.id, book: bookId };
+  });
+}
+function dropArrivals(chatId, slots) {
+  return earQueue(async () => {
+    const bookId = state.chat && state.chatId === chatId ? state.chat.earLorebookId : null;
+    if (!bookId) return;
+    for (const old of await arrivalEntries(bookId, slots)) await deleteEntry(bookId, old.id);
+  });
+}
+function secretDate(at) {
+  const date = new Date(at);
+  return date.toLocaleDateString(lang === "ru" ? "ru-RU" : "en-GB", { day: "2-digit", month: "2-digit" });
+}
+
+async function askSecret() {
+  if (secrets.busy || !state.chatId || !state.chat) return;
+  const chatId = state.chatId;
+  const here = state.chat;
+  const who = secrets.who;
+  if (!who || !here.slots.includes(who)) return setSecretNote(ft("secret_pick"));
+  const start = secretsStart();
+  if (!(start ? SECRET_START_LENS : SECRET_LENS).includes(secrets.len)) {
+    return setSecretNote(ft(start ? "secret_pick_start" : "secret_pick_len"));
+  }
+  const len = secrets.len;
+  const code = lang;
+  const kind = SECRET_KINDS.includes(secrets.kind) ? secrets.kind : SECRET_KINDS[randomIndex(SECRET_KINDS.length)];
+  const tone = DECK_TONES.includes(secrets.size) ? secrets.size : deckHere() ? deck.data.tone : "any";
+  const size = DECK_TONES.includes(tone) ? tone : DECK_TONES[randomIndex(DECK_TONES.length)];
+  const about = fel.secretAbout.value.trim().slice(0, SECRET_ABOUT_MAX);
+  secrets.busy = true;
+  setSecretNote("");
+  renderSecrets();
+  try {
+    const chat = await api(chatPath(chatId));
+    const connectionId = await secretConnection(chat.connectionId);
+    if (!connectionId) throw new Error(ft("secret_no_conn"));
+    const { messages, entering } = await secretPrompt(chatId, chat, here, who, len, kind, size, about, code);
+    const reply = await api("/api/generate/raw", { method: "POST", body: JSON.stringify({ connectionId, messages }) });
+    const { story, arrival } = splitStory(reply && !reply.aborted ? reply.content : "", entering);
+    if (!story) throw new Error(ft("secret_empty"));
+    const at = Date.now();
+    const name = state.names[who] || "";
+    await secretsWrite(chatId, async (d, ctx) => {
+      const fresh = await ensureSecretBook(d, ctx, code);
+      const entry = await api(`/api/lorebooks/${encodeURIComponent(d.book)}/entries`, {
+        method: "POST",
+        body: JSON.stringify({
+          lorebookId: d.book,
+          name: ft("secret_entry_name", { name: entryTitle(who), date: secretDate(at) }, code).slice(0, 200),
+          content: ft("secret_entry", { name, when: ft(`sw_${len}`, null, code), story }, code),
+          keys: [],
+          constant: true,
+          position: 2,
+          depth: earQuietDepth(),
+          role: "system",
+          characterFilterMode: "include",
+          ...entryTarget(who),
+        }),
+      });
+      let arr = null;
+      if (arrival) {
+        try {
+          arr = await saveArrival(chatId, who, arrival, code);
+        } catch (error) {
+          marinara.log.warn("Could not save the arrival", error);
+        }
+      }
+      d.items.push({
+        id: entry.id, who, name, len, kind, size, at, open: 0, t: story,
+        ...(arr ? { arr: arrival, arrId: arr.id, arrBook: arr.book } : {}),
+      });
+      if (fresh) await attachSecretsEverywhere(chatId, ctx, d.book);
+      else await attachSecrets(chatId, ctx.chat, ctx.all, d.book);
+    });
+    if (chatId === state.chatId) {
+      secrets.len = null;
+      secrets.kind = "any";
+      secrets.size = "deck";
+      fel.secretAbout.value = "";
+      setSecretNote(ft("secret_done"), "ok");
+    }
+  } catch (error) {
+    marinara.log.warn("Could not write what happened off-screen", error);
+    if (chatId === state.chatId) setSecretNote(ft("secret_failed", { err: error.message }));
+  } finally {
+    secrets.busy = false;
+    renderSecrets();
+  }
+}
+
+function disarmSecretForget() {
+  secrets.forgetArmed = null;
+  if (secrets.forgetTimer !== null) marinara.clearTimeout(secrets.forgetTimer);
+  secrets.forgetTimer = null;
+}
+// "Forget": the second tap within 3 s erases the envelope and its entry.
+function forgetSecret(id) {
+  if (secrets.forgetArmed !== id) {
+    disarmSecretForget();
+    secrets.forgetArmed = id;
+    secrets.forgetTimer = marinara.setTimeout(() => {
+      secrets.forgetTimer = null;
+      secrets.forgetArmed = null;
+      renderSecrets();
+    }, 3000);
+    return renderSecrets();
+  }
+  disarmSecretForget();
+  const chatId = state.chatId;
+  if (!chatId || secrets.chatId !== chatId) return;
+  secrets.data.items = secrets.data.items.filter((it) => it.id !== id);
+  if (secrets.open === id) secrets.open = null;
+  renderSecrets();
+  void secretsWrite(chatId, async (d) => {
+    const gone = d.items.find((it) => it.id === id);
+    if (gone && gone.arrId && gone.arrBook) await deleteEntry(gone.arrBook, gone.arrId);
+    if (d.book && d.items.some((it) => it.id === id)) {
+      try {
+        await api(`/api/lorebooks/${encodeURIComponent(d.book)}/entries/${encodeURIComponent(id)}`, { method: "DELETE" });
+      } catch (error) {
+        if (!String(error.message).startsWith("404")) throw error;
+      }
+    }
+    d.items = d.items.filter((it) => it.id !== id);
+  });
+}
+function toggleSecret(id) {
+  disarmSecretForget();
+  secrets.open = secrets.open === id ? null : id;
+  const it = secrets.data.items.find((item) => item.id === id);
+  if (it && secrets.open === id && !it.open) {
+    it.open = 1;
+    void secretsWrite(state.chatId, (d) => {
+      const item = d.items.find((x) => x.id === id);
+      if (item) item.open = 1;
+    });
+  }
+  renderSecrets();
+}
+
+function secretName(it) {
+  return state.names[it.who] ? shortName(it.who) : it.name || "?";
+}
+function secretRow(it) {
+  const wrap = document.createElement("div");
+  wrap.className = "kulisy-secret";
+  const reading = secrets.open === it.id;
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "kulisy-fate-row kulisy-secret-row" + (it.open ? "" : " is-secret");
+  row.setAttribute("aria-expanded", String(reading));
+  const time = document.createElement("span");
+  time.className = "kulisy-fate-time";
+  time.textContent = fateTime(it.at);
+  const what = document.createElement("span");
+  what.className = "kulisy-fate-what";
+  what.textContent = `${it.open ? "📖" : "✉️"} ${secretName(it)} · ${ft(`sl_${it.len}`).toLowerCase()}`;
+  if (it.open) {
+    const kind = document.createElement("b");
+    kind.textContent = `${ft(`sk_${it.kind}`)} · ${ft(`tone_${it.size}`).toLowerCase()}`;
+    what.append(" · ", kind);
+  }
+  const sub = document.createElement("span");
+  sub.className = "kulisy-fate-sub";
+  sub.textContent = ft(reading ? "secret_read" : it.open ? "secret_closed" : "secret_sealed");
+  row.append(time, what, sub);
+  row.addEventListener("click", () => toggleSecret(it.id));
+  wrap.append(row);
+  if (reading) {
+    const story = document.createElement("div");
+    story.className = "kulisy-secret-text";
+    story.textContent = it.t;
+    const arrival = document.createElement("div");
+    arrival.className = "kulisy-secret-text kulisy-secret-arrival";
+    arrival.hidden = !it.arr;
+    arrival.textContent = it.arr ? `${ft("secret_arrival")} ${it.arr}` : "";
+    const forget = document.createElement("button");
+    forget.type = "button";
+    const armed = secrets.forgetArmed === it.id;
+    forget.className = "kulisy-clear kulisy-secret-forget" + (armed ? " is-armed" : "");
+    forget.textContent = ft(armed ? "secret_forget_sure" : "secret_forget");
+    forget.addEventListener("click", () => forgetSecret(it.id));
+    wrap.append(story, arrival, forget);
+  }
+  return wrap;
+}
+// The open character's envelopes, "What happened to them? ›" and, under it, the form (lent to that row).
+function renderSecrets() {
+  paintScene();
+  const chat = state.chat;
+  const id = scene.open;
+  const row = id && scene.rows[id];
+  if (secrets.step && (!chat || !chat.slots.includes(secrets.step))) secrets.step = null;
+  if (!row || !state.names[id]) {
+    fel.secretForm.remove();
+    return;
+  }
+  const start = secretsStart();
+  const lens = start ? SECRET_START_LENS : SECRET_LENS;
+  if (secrets.len && !lens.includes(secrets.len)) secrets.len = null;
+  fel.secretLenLabel.textContent = ft(start ? "secret_len_start" : "secret_len");
+  fel.secretLen.replaceChildren(
+    ...lens.map((l) =>
+      fateChip(ft(`sl_${l}`), l === secrets.len, () => {
+        secrets.len = l;
+        setSecretNote("");
+        renderSecrets();
+      }),
+    ),
+  );
+  const upFirst = (text) => text.charAt(0).toLocaleUpperCase() + text.slice(1);
+  fel.secretKind.replaceChildren(
+    ...["any", ...SECRET_KINDS].map((k) =>
+      fateChip(k === "any" ? ft("secret_any") : upFirst(ft(`sk_${k}`)), k === secrets.kind, () => {
+        secrets.kind = k;
+        renderSecrets();
+      }),
+    ),
+  );
+  fel.secretSize.replaceChildren(
+    ...["deck", ...DECK_TONES].map((s) => {
+      const pick = () => {
+        secrets.size = s;
+        renderSecrets();
+      };
+      return s === "deck" ? fateChip(ft("secret_size_deck"), secrets.size === s, pick) : deckToneChip(s, secrets.size === s, pick);
+    }),
+  );
+  fel.secretGo.textContent = ft(secrets.busy ? "secret_busy" : "secret_ask");
+  fel.secretGo.disabled = secrets.busy;
+  const items =
+    secrets.chatId && secrets.chatId === state.chatId
+      ? secrets.data.items.filter((it) => it.who === id).sort((a, b) => b.at - a.at)
+      : [];
+  const nodes = [];
+  if (items.length) nodes.push(sceneLabel(ft("secrets_label")));
+  if (items.length > SECRET_KEEP) {
+    const oldest = items[items.length - 1];
+    const box = document.createElement("div");
+    box.className = "kulisy-fate-armed kulisy-secret-over";
+    const text = document.createElement("span");
+    text.textContent = ft("secret_over", { name: secretName(oldest), n: SECRET_KEEP });
+    const button = document.createElement("button");
+    button.type = "button";
+    const armed = secrets.forgetArmed === oldest.id;
+    button.className = "kulisy-clear" + (armed ? " is-armed" : "");
+    button.textContent = ft(armed ? "secret_forget_sure" : "secret_forget_old");
+    button.addEventListener("click", () => forgetSecret(oldest.id));
+    box.append(text, button);
+    nodes.push(box);
+  }
+  if (items.length) {
+    const list = document.createElement("div");
+    list.className = "kulisy-secret-list";
+    list.append(...items.map(secretRow));
+    nodes.push(list);
+  }
+  const asking = secrets.step === id;
+  const opener = document.createElement("button");
+  opener.type = "button";
+  opener.className = "kulisy-clear kulisy-secret-open";
+  opener.dataset.state = asking ? "on" : "";
+  opener.setAttribute("aria-expanded", String(asking));
+  opener.textContent = `${ft("secret_go")} ${asking ? "▴" : "›"}`;
+  opener.addEventListener("click", () => {
+    secrets.step = asking ? null : id;
+    secrets.who = id;
+    setSecretNote("");
+    renderSecrets();
+  });
+  nodes.push(opener);
+  if (asking) nodes.push(fel.secretForm);
+  else fel.secretForm.remove();
+  row.secrets.replaceChildren(...nodes);
+}
+function resetSecrets() {
+  secrets.chatId = null;
+  secrets.data = { book: "", items: [] };
+  secrets.who = null;
+  secrets.step = null;
+  secrets.len = null;
+  secrets.kind = "any";
+  secrets.size = "deck";
+  fel.secretAbout.value = "";
+  secrets.open = null;
+  disarmSecretForget();
+  setSecretNote("");
+  if (secrets.offer && secrets.offer.chatId !== state.chatId) secrets.offer = null;
+  paintSecretOffer();
+}
+function paintSecretOffer() {
+  const o = secrets.offer;
+  const show = !!(o && o.chatId === state.chatId && state.names[o.id] && !awayIds().includes(o.id));
+  el.hereAsk.hidden = !show;
+  el.hereAsk.textContent = show ? ft("secret_offer", { name: shortName(o.id) }) : "";
+}
+function openSecretOffer() {
+  const o = secrets.offer;
+  secrets.offer = null;
+  paintSecretOffer();
+  if (!o || o.chatId !== state.chatId) return;
+  secrets.who = o.id;
+  secrets.step = o.id;
+  secrets.len = null;
+  setSecretNote("");
+  scene.open = o.id;
+  if (page !== "scene") showPage("scene");
+  renderScene();
+  const row = scene.rows[o.id];
+  if (row) requestAnimationFrame(() => row.wrap.scrollIntoView({ block: "start" }));
+}
+fel.secretGo.addEventListener("click", () => void askSecret());
+el.hereAsk.addEventListener("click", openSecretOffer);
+
+function deckToneChip(tone, on, onClick) {
+  const chip = fateChip(ft(`tone_${tone}`), on, onClick);
+  chip.dataset.tone = tone;
+  return chip;
+}
+
+function renderDeck() {
+  const data = deckHere() ? deck.data : { tone: "any", cards: [] };
+  fel.deckTone.replaceChildren(
+    ...["any", ...DECK_TONES].map((tone) =>
+      deckToneChip(tone, data.tone === tone, () => {
+        setDeckHint("");
+        deckSave((d) => {
+          d.tone = tone;
+        });
+      }),
+    ),
+  );
+  // the Deck tab's "for the next reply" (where there is no move button): a pressed chip is taken back by a second tap
+  const drawn = deckArmedHere();
+  const shown = !!drawn && !drawn.a;
+  fel.deckDraw.replaceChildren(
+    fateChip(`🃏 ${ft("move_event")}`, shown, () => {
+      if (!shown) return drawDeck();
+      deck.pending = null;
+      setDeckHint("");
+      renderDeck();
+    }),
+  );
+  const auto = deckHere() ? deck.auto.f : "off";
+  fel.deckAuto.replaceChildren(
+    ...["off", ...Object.keys(DECK_AUTO)].map((f) => fateChip(ft(`auto_${f}`), auto === f, () => setDeckAuto(f))),
+  );
+  const dry = auto !== "off" && !data.cards.some((c) => !c.used && (data.tone === "any" || c.tone === data.tone));
+  fel.deckAutoHint.textContent = dry ? ft("deck_auto_dry") : "";
+  fel.deckAutoHint.hidden = !dry;
+  const armed = deckArmedHere();
+  const p = armed && !armed.a ? armed : null; // the deck's own hand stays secret: no plate
+  fel.deckArmed.hidden = !p;
+  fel.deckArmedText.textContent = !p
+    ? ""
+    : p.s
+      ? ft("deck_armed_secret")
+      : ft(p.cards.length === 1 ? "deck_armed_one" : "deck_armed", { list: p.cards.map((c) => c.t).join(" · ") });
+  const left = data.cards.filter((c) => !c.used).length;
+  const where = !deckHere()
+    ? ""
+    : deck.folder
+      ? ft("deck_where_folder_short", { name: deck.folder })
+      : ft("deck_where_chat_short");
+  const count = data.cards.length ? ft("deck_count", { left, all: data.cards.length }) : ft("deck_none");
+  fel.deckCount.textContent = where ? `${count} · ${where}` : count;
+  renderDeckList(data);
+  paintDie();
+}
+
+function renderDeckList(data) {
+  const open = fel.deckList.querySelector(".kulisy-deck-form textarea");
+  const draft = open && open.dataset.card === deck.openCard ? open.value : null;
+  if (deck.openCard && !data.cards.some((c) => c.id === deck.openCard)) deck.openCard = null;
+  const nodes = [];
+  if (!data.cards.length) {
+    const empty = document.createElement("div");
+    empty.className = "kulisy-hint";
+    empty.textContent = ft("deck_list_empty");
+    nodes.push(empty);
+  }
+  // 0.9.22 (Leah 19.10): the cards hide in three folded lists, one per size; an open card keeps its list open
+  const toneOf = (card) => (DECK_TONES.includes(card.tone) ? card.tone : "cozy");
+  const openCard = deck.openCard && data.cards.find((c) => c.id === deck.openCard);
+  if (openCard) deck.groups.add(toneOf(openCard));
+  if (deck.adding) deck.groups.add(deck.adding);
+  for (const tone of DECK_TONES) {
+    const cards = data.cards.filter((c) => toneOf(c) === tone);
+    const isOpen = deck.groups.has(tone);
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "kulisy-deck-group";
+    head.dataset.tone = tone;
+    head.setAttribute("aria-expanded", String(isOpen));
+    const dot = document.createElement("span");
+    dot.className = "kulisy-deck-dot";
+    dot.setAttribute("aria-hidden", "true");
+    const name = document.createElement("span");
+    name.className = "kulisy-deck-group-name";
+    name.textContent = ft(`tone_${tone}`);
+    const count = document.createElement("span");
+    count.className = "kulisy-deck-group-count";
+    count.textContent = cards.length
+      ? ft("deck_group_count", { left: cards.filter((c) => !c.used).length, all: cards.length })
+      : ft("deck_group_none");
+    head.append(dot, name, count);
+    head.addEventListener("click", () => {
+      disarmDeckDelete();
+      if (deck.groups.has(tone)) {
+        deck.groups.delete(tone);
+        if (openCard && toneOf(openCard) === tone) deck.openCard = null;
+        if (deck.adding === tone) deck.adding = false;
+      } else deck.groups.add(tone);
+      saveDeckGroups();
+      renderDeck();
+    });
+    nodes.push(head);
+    if (isOpen) nodes.push(...deckCardRows(cards, draft), deckNewRow(tone));
+  }
+  fel.deckList.replaceChildren(...nodes);
+  renderDeckTools(data);
+}
+
+function deckCardRows(cards, draft) {
+  const nodes = [];
+  for (const card of cards) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "kulisy-deck-card" + (card.used ? " is-used" : "");
+    row.dataset.tone = card.tone;
+    row.setAttribute("aria-expanded", String(deck.openCard === card.id));
+    const dot = document.createElement("span");
+    dot.className = "kulisy-deck-dot";
+    dot.setAttribute("aria-hidden", "true");
+    const text = document.createElement("span");
+    text.className = "kulisy-deck-text";
+    text.textContent = card.t;
+    row.append(dot, text);
+    row.addEventListener("click", () => {
+      disarmDeckDelete();
+      if (deck.openCard === card.id) {
+        deck.openCard = null;
+      } else {
+        deck.openCard = card.id;
+        deck.formTone = card.tone;
+        deck.formUsed = !!card.used;
+      }
+      renderDeck();
+    });
+    nodes.push(row);
+    if (deck.openCard === card.id) nodes.push(deckForm(card, draft));
+  }
+  return nodes;
+}
+
+function renderDeckTools(data) {
+  const canShuffle = data.cards.some((c) => c.used);
+  fel.deckShuffle.hidden = !canShuffle;
+  fel.deckBulk.hidden = !deck.bulk;
+  fel.deckBulkOpen.hidden = deck.bulk;
+  const allArmed = deck.deleteArmed === "*all";
+  const undo = deck.undo && deck.undo.chatId === deck.chatId ? deck.undo : null;
+  fel.deckUndo.hidden = !undo;
+  fel.deckUndoText.textContent = undo ? ft("deck_undo_text", { n: undo.cards.length }) : "";
+  fel.deckClearAll.hidden = !data.cards.length || !!undo;
+  fel.deckClearAll.classList.toggle("is-armed", allArmed);
+  fel.deckClearAll.textContent = ft(allArmed ? "deck_clear_sure" : "deck_clear_all");
+  const hasMore = canShuffle || !fel.deckClearAll.hidden;
+  if (!hasMore) deck.more = false;
+  fel.deckMore.hidden = !hasMore;
+  fel.deckMore.setAttribute("aria-expanded", String(deck.more));
+  fel.deckMoreBox.hidden = !deck.more;
+}
+
+// "+ New card" at the end of an open size list; a tap turns it into a field with "Add" and "Cancel" (0.9.24, Leah 20.10:
+// the card's size is its list's, so no size chips). The field is one node, kept across redraws.
+const deckAddForm = document.createElement("div");
+deckAddForm.className = "kulisy-deck-add";
+const deckNewField = document.createElement("textarea");
+deckNewField.className = "kulisy-deck-new";
+deckNewField.rows = 2;
+deckNewField.maxLength = DECK_TEXT_MAX;
+const deckAddActions = document.createElement("div");
+deckAddActions.className = "kulisy-deck-actions";
+const deckAddBtn = document.createElement("button");
+deckAddBtn.type = "button";
+deckAddBtn.className = "kulisy-send";
+const deckAddCancel = document.createElement("button");
+deckAddCancel.type = "button";
+deckAddCancel.className = "kulisy-clear";
+deckAddActions.append(deckAddBtn, deckAddCancel);
+deckAddForm.append(deckNewField, deckAddActions);
+deckAddBtn.addEventListener("click", addDeckCard);
+deckAddCancel.addEventListener("click", () => {
+  deck.adding = false;
+  deckNewField.value = "";
+  renderDeck();
+});
+deckNewField.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    addDeckCard();
+  }
+});
+function deckNewRow(tone) {
+  if (deck.adding === tone) {
+    deckNewField.placeholder = ft("deck_new_ph");
+    deckAddBtn.textContent = ft("deck_add");
+    deckAddCancel.textContent = ft("deck_cancel");
+    return deckAddForm;
+  }
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "kulisy-deck-new-row";
+  row.textContent = ft("deck_new_card");
+  row.addEventListener("click", () => {
+    disarmDeckDelete();
+    if (deck.adding !== tone) deckNewField.value = "";
+    deck.adding = tone;
+    deck.openCard = null;
+    renderDeck();
+    deckNewField.focus();
+  });
+  return row;
+}
+
+function deckForm(card, draft) {
+  const form = document.createElement("div");
+  form.className = "kulisy-deck-form";
+  const area = document.createElement("textarea");
+  area.rows = 2;
+  area.maxLength = DECK_TEXT_MAX;
+  area.dataset.card = card.id;
+  area.value = draft !== null ? draft : card.t;
+  const tones = document.createElement("div");
+  tones.className = "kulisy-mode-group kulisy-fate-chips";
+  tones.append(
+    ...DECK_TONES.map((tone) =>
+      deckToneChip(tone, tone === deck.formTone, () => {
+        deck.formTone = tone;
+        renderDeck();
+      }),
+    ),
+  );
+  const used = document.createElement("label");
+  used.className = "kulisy-person";
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = deck.formUsed;
+  box.addEventListener("change", () => {
+    deck.formUsed = box.checked;
+  });
+  const usedText = document.createElement("span");
+  usedText.textContent = ft("deck_used");
+  used.append(box, usedText);
+  const actions = document.createElement("div");
+  actions.className = "kulisy-deck-actions";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "kulisy-send";
+  save.textContent = ft("deck_save");
+  save.addEventListener("click", () => {
+    const t = area.value.trim().slice(0, DECK_TEXT_MAX);
+    if (!t) return area.focus();
+    const tone = deck.formTone;
+    const isUsed = deck.formUsed ? 1 : 0;
+    deck.openCard = null;
+    deckSave((d) => {
+      const c = d.cards.find((x) => x.id === card.id);
+      if (c) Object.assign(c, { t, tone, used: isUsed });
+    });
+  });
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "kulisy-clear kulisy-deck-delete";
+  const armed = deck.deleteArmed === card.id;
+  del.classList.toggle("is-armed", armed);
+  del.textContent = ft(armed ? "deck_delete_sure" : "deck_delete");
+  del.addEventListener("click", () => {
+    if (deck.deleteArmed !== card.id) {
+      deck.deleteArmed = card.id;
+      if (deck.deleteTimer !== null) marinara.clearTimeout(deck.deleteTimer);
+      deck.deleteTimer = marinara.setTimeout(() => {
+        deck.deleteTimer = null;
+        deck.deleteArmed = null;
+        renderDeck();
+      }, 3000);
+      return renderDeck();
+    }
+    disarmDeckDelete();
+    deck.openCard = null;
+    // a deleted card leaves the hand that waits for a reply too
+    const p = deckArmedHere();
+    if (p) {
+      p.cards = p.cards.filter((c) => c.id !== card.id);
+      if (!p.cards.length) deck.pending = null;
+    }
+    deckSave((d) => {
+      d.cards = d.cards.filter((x) => x.id !== card.id);
+    });
+  });
+  actions.append(save, del);
+  form.append(area, tones, used, actions);
+  return form;
+}
+
+function disarmDeckDelete() {
+  if (deck.deleteTimer !== null) marinara.clearTimeout(deck.deleteTimer);
+  deck.deleteTimer = null;
+  deck.deleteArmed = null;
+}
+
+function addDeckCard() {
+  const t = deckNewField.value.trim().slice(0, DECK_TEXT_MAX);
+  if (!t) return deckNewField.focus();
+  if (!deckHere() || !deck.adding || deck.data.cards.length >= DECK_MAX) return;
+  const card = { id: deckCardId(), t, tone: deck.adding, used: 0 };
+  deckNewField.value = "";
+  deckNewField.focus();
+  deckSave((d) => {
+    if (!d.cards.some((c) => c.id === card.id)) d.cards.push({ ...card });
+  });
+}
+
+// "Paste a list" (Leah 18.10: players write cards ahead or have an AI write a batch). One card per line; a heading line
+// with a size's name ("Minor:", "## Twist", "Встряска") sets the size of the lines under it, lines before any heading are
+// minor; other lines ending in a colon are skipped. List marks, numbers, bold and quotes around a line are dropped; a card already in the deck (same words) is skipped.
+const DECK_HEAD_STEMS = {
+  cozy: ["мелоч", "minor", "small", "уют", "cozy"],
+  tense: ["поворот", "twist", "тревог", "tense"],
+  danger: ["встряск", "shake", "опасн", "danger"],
+};
+function deckHead(line) {
+  const hashed = line.startsWith("#");
+  const bare = line.replace(/^[#*_\s]+|[*_\s]+$/g, "");
+  const colon = bare.endsWith(":");
+  const words = bare.replace(/:$/, "").trim().split(/\s+/);
+  if (!words[0] || words.length > 3 || !(hashed || colon || words.length === 1)) return null;
+  const first = words[0].toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}]/gu, "");
+  if (!first) return null;
+  for (const tone of DECK_TONES) if (DECK_HEAD_STEMS[tone].some((stem) => first.startsWith(stem))) return tone;
+  return null;
+}
+function deckLine(line) {
+  return line
+    .replace(/^\s*(?:[-*•–—+]+|\d+[.)])\s*/, "")
+    .replace(/\*\*/g, "")
+    .trim()
+    .replace(/^[«"“„']+|[»"”']+$/g, "")
+    .replace(/\.$/, "")
+    .trim()
+    .slice(0, DECK_TEXT_MAX);
+}
+function deckTextKey(text) {
+  return String(text).toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+}
+function showBulkResult(text) {
+  fel.deckBulkResult.textContent = text;
+  fel.deckBulkResult.hidden = !text;
+}
+function showDeckBulk(on) {
+  deck.bulk = on;
+  showBulkResult("");
+  renderDeck();
+  if (on) fel.deckBulkText.focus();
+}
+function addDeckList() {
+  if (!deckHere()) return;
+  let tone = "cozy";
+  const found = [];
+  for (const raw of fel.deckBulkText.value.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const head = deckHead(line);
+    if (head) {
+      tone = head;
+      continue;
+    }
+    if (/:[*_\s]*$/.test(line)) continue; // another heading, e.g. an AI's "Here are your cards:"
+    const t = deckLine(line);
+    if (t) found.push({ t, tone });
+  }
+  if (!found.length) return showBulkResult(ft("deck_bulk_none"));
+  const have = new Set(deck.data.cards.map((c) => deckTextKey(c.t)));
+  const cards = [];
+  let dupes = 0;
+  let full = 0;
+  for (const c of found) {
+    const key = deckTextKey(c.t);
+    if (have.has(key)) dupes += 1;
+    else if (deck.data.cards.length + cards.length >= DECK_MAX) full += 1;
+    else {
+      have.add(key);
+      cards.push({ id: deckCardId(), t: c.t, tone: c.tone, used: 0 });
+    }
+  }
+  if (cards.length) {
+    deckSave((d) => {
+      const seen = new Set(d.cards.map((c) => deckTextKey(c.t)));
+      for (const c of cards) {
+        if (d.cards.length >= DECK_MAX || seen.has(deckTextKey(c.t))) continue;
+        seen.add(deckTextKey(c.t));
+        d.cards.push({ ...c });
+      }
+    });
+  }
+  fel.deckBulkText.value = "";
+  deck.bulk = false;
+  renderDeck();
+  const parts = [ft("deck_bulk_done", { n: cards.length })];
+  if (dupes) parts.push(ft("deck_bulk_dupes", { n: dupes }));
+  if (full) parts.push(ft("deck_bulk_full", { n: full, max: DECK_MAX }));
+  showBulkResult(parts.join(" "));
+}
+
+
+function saveFateOption(key, value) {
+  marinara.storage.patch({ [key]: value }).catch((error) => marinara.log.warn("Could not save the die option", error));
+}
+
+fel.deckCancel.addEventListener("click", () => {
+  deck.pending = null;
+  setDeckHint("");
+  renderDeck();
+});
+fel.truthCancel.addEventListener("click", () => {
+  truth.pending = null;
+  setTruthHint("");
+  renderTruth();
+});
+fel.deckMore.addEventListener("click", () => {
+  deck.more = !deck.more;
+  disarmDeckDelete();
+  renderDeck();
+});
+fel.deckBulkOpen.addEventListener("click", () => showDeckBulk(true));
+fel.deckBulkCancel.addEventListener("click", () => showDeckBulk(false));
+fel.deckBulkAdd.addEventListener("click", addDeckList);
+// "Remove all cards": the second tap within 3 s removes them (as "Delete" on a card)
+fel.deckClearAll.addEventListener("click", () => {
+  if (deck.deleteArmed !== "*all") {
+    deck.deleteArmed = "*all";
+    if (deck.deleteTimer !== null) marinara.clearTimeout(deck.deleteTimer);
+    deck.deleteTimer = marinara.setTimeout(() => {
+      deck.deleteTimer = null;
+      deck.deleteArmed = null;
+      renderDeck();
+    }, 3000);
+    return renderDeck();
+  }
+  disarmDeckDelete();
+  deck.openCard = null;
+  if (!deckHere()) return;
+  deck.undo = { chatId: deck.chatId, cards: deck.data.cards.map((c) => ({ ...c })), pending: deckArmedHere() };
+  if (deckArmedHere()) deck.pending = null;
+  showBulkResult("");
+  deckSave((d) => {
+    d.cards = [];
+  });
+});
+// "Bring back" (Leah 18.10: in case "Remove all" was tapped by accident): the removed cards return in front of any added
+// since, with their "played" marks; a hand that was waiting for a reply waits again.
+fel.deckUndoBtn.addEventListener("click", () => {
+  const undo = deck.undo;
+  deck.undo = null;
+  if (!undo || undo.chatId !== deck.chatId || !deckHere()) return renderDeck();
+  if (undo.pending && !deck.pending) deck.pending = undo.pending;
+  deckSave((d) => {
+    const have = new Set(d.cards.map((c) => c.id));
+    d.cards = [...undo.cards.filter((c) => !have.has(c.id)).map((c) => ({ ...c })), ...d.cards].slice(0, DECK_MAX);
+  });
+});
+fel.deckShuffle.addEventListener("click", () => {
+  deckSave((d) => {
+    for (const c of d.cards) c.used = 0;
+  });
+});
+fel.surprise.addEventListener("change", () => {
+  fate.surprise = fel.surprise.checked;
+  saveFateOption("fateSurprise", fate.surprise);
+});
+fel.noDie.addEventListener("change", () => {
+  fate.noDie = fel.noDie.checked;
+  saveFateOption("fateNoDie", fate.noDie);
+  ensureDie();
+});
+fel.devOn.addEventListener("change", () => {
+  devMode = fel.devOn.checked;
+  saveFateOption("devMode", devMode);
+  paintPages();
+  if (devMode) showPage("texts");
+});
+fateReady = true;
+paintFateTexts();
+
+// ---- handing the roll to Marinara's own requests ----
+
+const originalFetch = window.fetch;
+function requestPath(input) {
+  try {
+    const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+    return new URL(url, location.href).pathname;
+  } catch {
+    return "";
+  }
+}
+
+// Show the roll at once: put the saved extra into Marinara's cached copy of the message (no refetch mid-stream).
+function patchCachedExtra(chatId, messageId, extra) {
+  const client = findQueryClient();
+  if (!client) return;
+  client.setQueryData(["chats", "messages", chatId], (data) => {
+    if (!data || !Array.isArray(data.pages)) return data;
+    return {
+      ...data,
+      pages: data.pages.map((page) =>
+        Array.isArray(page)
+          ? page.map((m) =>
+              m && m.id === messageId ? { ...m, extra: typeof m.extra === "string" ? JSON.stringify(extra) : extra } : m,
+            )
+          : page,
+      ),
+    };
+  });
+}
+
+// The usual group order: Marinara's /generate creates the user's message on the server — find it by the request's
+// submissionId and write the roll to it.
+async function markFateMessage(p, submissionId) {
+  for (const wait of [400, 1200, 3000, 8000]) {
+    await new Promise((resolve) => marinara.setTimeout(resolve, wait));
+    try {
+      const messages = await api(chatPath(p.chatId, "/messages?limit=12"));
+      const found = (Array.isArray(messages) ? messages : []).find((m) => {
+        if (m.role !== "user") return false;
+        const extra = parseMaybeJson(m.extra, {}) || {};
+        return submissionId ? extra.submissionId === submissionId : msTime(m.createdAt) >= p.at - 2000;
+      });
+      if (!found) continue;
+      const extra = parseMaybeJson(found.extra, {}) || {};
+      const kulisy = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : {};
+      if (kulisy.fate) return;
+      const next = { ...kulisy, fate: fateRecord(p) };
+      await api(chatPath(p.chatId, `/messages/${encodeURIComponent(found.id)}/extra`), {
+        method: "PATCH",
+        body: JSON.stringify({ kulisy: next }),
+      });
+      patchCachedExtra(p.chatId, found.id, { ...extra, kulisy: next });
+      scheduleBadges();
+      scheduleFateLog();
+      return;
+    } catch (error) {
+      marinara.log.warn("Could not mark the roll on the message", error);
+    }
+  }
+}
+
+function restorePending(p) {
+  if (!fate.pending) fate.pending = p;
+  paintDie();
+}
+
+function fateGenerate(input, init, p) {
+  const body = JSON.parse(init.body);
+  // a regenerate gets the guide back from Marinara itself; continue / impersonate are not the attempt's reply
+  if (body.chatId !== p.chatId || body.regenerateMessageId || body.continueMessageId || body.impersonate) return null;
+  const guide = fateGuide(p);
+  const own = typeof body.generationGuide === "string" && body.generationGuide.trim() ? body.generationGuide : "";
+  body.generationGuide = own ? `${own}\n\n${guide}` : guide;
+  if (!body.generationGuideSource) body.generationGuideSource = "guide";
+  fate.pending = null;
+  paintDie();
+  const withMessage = !p.msgDone && typeof body.userMessage === "string" && body.userMessage.trim() !== "";
+  const request = sendOut(input, { ...init, body: JSON.stringify(body) });
+  // Marinara puts the text back into the box after a failed send — the same roll waits for the retry
+  request.then(
+    (response) => {
+      if (!response.ok) restorePending(p);
+      else if (withMessage) void markFateMessage(p, body.submissionId);
+    },
+    () => restorePending(p),
+  );
+  return request;
+}
+
+// The Manual group order: send only creates the user's message — the roll is written into it right away and waits
+// for the generation from the character picker.
+function fateMessage(input, init, p) {
+  const body = JSON.parse(init.body);
+  if (body.role !== "user") return null;
+  const extra = body.extra && typeof body.extra === "object" ? body.extra : {};
+  if (extra.kulisy) return null; // the panel's own whisper
+  body.extra = { ...extra, kulisy: { fate: fateRecord(p) } };
+  p.msgDone = true;
+  return sendOut(input, { ...init, body: JSON.stringify(body) });
+}
+
+// ---- the whisper on its way (0.9.21): the user's next message in the chat becomes the whisper ----
+// Hidden from everyone not checked (and from those away). "What everyone sees", if written, goes first as its own
+// message. The usual group order: Marinara's /generate would create the message itself, unhidden, and build the reply
+// from it at once — so the message is posted here first (with Marinara's submissionId and the same text: its send
+// finds the turn arrived) and /generate goes on without a message, like an empty send. Manual order: Marinara's own
+// POST of the message gets the hiding added.
+function whisperRequest(input, init) {
+  const plan = whisperHere();
+  if (!plan || !state.chat || !init || typeof init.body !== "string") return null;
+  if (String(init.method || "GET").toUpperCase() !== "POST") return null;
+  const path = requestPath(input);
+  const body = JSON.parse(init.body);
+  if (path === "/api/generate") {
+    if (body.chatId !== plan.chatId || body.regenerateMessageId || body.continueMessageId || body.impersonate) return null;
+    if (body.pendingSpatialTransition || typeof body.userMessage !== "string" || !body.userMessage.trim()) return null;
+    return { plan, body, generate: true };
+  }
+  if (path !== `/api/chats/${plan.chatId}/messages` || body.role !== "user") return null;
+  const extra = body.extra && typeof body.extra === "object" ? body.extra : {};
+  const kulisy = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : {};
+  if (kulisy.kind || kulisy.away) return null; // Offstage's own message
+  return { plan, body, generate: false };
+}
+function whisperHiding() {
+  const heard = new Set(whisperHearers());
+  const away = awayIds();
+  const kulisy = { kind: "whisper", turn: 1 }; // turn: the deck's "draws by itself" counts it (whisperHalf)
+  if (away.length) kulisy.away = away;
+  return { hiddenFromAICharacterIds: state.chat.characterIds.filter((id) => !heard.has(id)), kulisy };
+}
+// "What everyone sees": hidden only from those away; kind "all" — the whisper's public half
+function allLine(chatId, text) {
+  const away = awayIds();
+  const kulisy = { kind: "all" };
+  const extra = { kulisy };
+  if (away.length) {
+    kulisy.away = away;
+    extra.hiddenFromAICharacterIds = away;
+  }
+  return { chatId, role: "user", characterId: null, content: text, extra };
+}
+async function postOwnMessage(chatId, init, body) {
+  const headers = new Headers((init && init.headers) || {});
+  headers.set("Content-Type", "application/json");
+  headers.set("x-marinara-csrf", "1");
+  headers.delete("Accept");
+  const response = await originalFetch.call(window, chatPath(chatId, "/messages"), {
+    method: "POST",
+    headers,
+    credentials: (init && init.credentials) || "same-origin",
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`Offstage: the whisper was not saved (${response.status})`);
+  return response.json();
+}
+async function postAllLine(plan, init) {
+  if (!plan.all) return;
+  await postOwnMessage(plan.chatId, init, allLine(plan.chatId, plan.all));
+  plan.all = "";
+  whisper.all = "";
+}
+// "write the whisper in the box" goes once the whisper is sent or taken back
+function dropHint() {
+  if (fate.flash && fate.flash.classList.contains("is-hint")) showFlash("", "");
+}
+function whisperSent(plan) {
+  if (whisper.plan === plan) whisper.plan = null;
+  dropHint();
+  paintDie();
+  scheduleBadges();
+}
+async function whisperGenerate(input, init, w) {
+  const { plan, body } = w;
+  const hiding = whisperHiding();
+  await postAllLine(plan, init);
+  const extra = { ...hiding };
+  if (body.submissionId) extra.submissionId = body.submissionId;
+  if (Array.isArray(body.attachments) && body.attachments.length) extra.attachments = body.attachments;
+  if (body.replyTo) extra.replyTo = body.replyTo;
+  await postOwnMessage(plan.chatId, init, {
+    chatId: plan.chatId,
+    role: "user",
+    characterId: null,
+    content: body.userMessage,
+    extra,
+  });
+  whisperSent(plan);
+  const next = { ...body, userMessage: null };
+  delete next.attachments;
+  delete next.replyTo;
+  delete next.submissionId;
+  return originalFetch.call(window, input, { ...init, body: JSON.stringify(next) });
+}
+async function whisperMessage(input, init, w) {
+  const { plan, body } = w;
+  const hiding = whisperHiding();
+  const extra = body.extra && typeof body.extra === "object" ? body.extra : {};
+  const own = extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy : {};
+  const next = {
+    ...body,
+    extra: { ...extra, hiddenFromAICharacterIds: hiding.hiddenFromAICharacterIds, kulisy: { ...own, ...hiding.kulisy } },
+  };
+  await postAllLine(plan, init);
+  const response = await originalFetch.call(window, input, { ...init, body: JSON.stringify(next) });
+  if (response.ok) whisperSent(plan);
+  return response;
+}
+function sendOut(input, init) {
+  let w = null;
+  try {
+    w = whisperRequest(input, init);
+  } catch (error) {
+    marinara.log.warn("Could not check the request for the whisper", error);
+  }
+  if (!w) return originalFetch.call(window, input, init);
+  return w.generate ? whisperGenerate(input, init, w) : whisperMessage(input, init, w);
+}
+
+// A roll on the user's last message that nobody has answered (the reply was deleted and someone else was called, Leah
+// 18.10): the next reply gets the outcome too. Not for a new message of the user, a regenerate (Marinara replays its own
+// guide), continue / impersonate, or a request that already carries a roll (a character's attempt).
+const FATE_ANY_ROLL = ["броском кубика", "by a die roll"];
+function wantsCarry(body) {
+  if (!body || typeof body.chatId !== "string" || body.regenerateMessageId || body.continueMessageId || body.impersonate) return false;
+  if (typeof body.userMessage === "string" && body.userMessage.trim()) return false;
+  const own = typeof body.generationGuide === "string" ? body.generationGuide : "";
+  return !FATE_ANY_ROLL.some((mark) => own.includes(mark)) && !guideFromOwn(own, ["fate:guide", "fate:guide_char"]);
+}
+async function fateCarryGenerate(input, init, body) {
+  try {
+    const messages = await api(chatPath(body.chatId, "/messages?limit=1"));
+    const last = Array.isArray(messages) ? messages[messages.length - 1] : null;
+    const extra = last && last.role === "user" ? parseMaybeJson(last.extra, {}) || {} : null;
+    const f = extra && extra.kulisy && typeof extra.kulisy === "object" ? extra.kulisy.fate : null;
+    if (f && !f.who && FATE_EDGES[f.d] && FATE_OUTCOMES.includes(f.o)) {
+      const guide = fateGuide({ o: f.o, lang });
+      const own = typeof body.generationGuide === "string" && body.generationGuide.trim() ? body.generationGuide : "";
+      body.generationGuide = own ? `${own}
+
+${guide}` : guide;
+      if (!body.generationGuideSource) body.generationGuideSource = "guide";
+      init = { ...init, body: JSON.stringify(body) };
+    }
+  } catch (error) {
+    marinara.log.warn("Could not check the last message for a roll", error);
+  }
+  return originalFetch.call(window, input, init);
+}
+
+function routeFetch(input, init) {
+  let hand = null;
+  let auto = null;
+  try {
+    hand = deckHandRequest(input, init);
+  } catch (error) {
+    marinara.log.warn("Could not check the request for the last hand", error);
+  }
+  try {
+    auto = deckAutoRequest(input, init);
+  } catch (error) {
+    marinara.log.warn("Could not check the request for the deck's own draw", error);
+  }
+  if ((hand && hand.before) || auto) {
+    // a hand whose reply was deleted comes back first; the deck draws by itself only if nothing waits
+    const ready = (hand && hand.before ? checkHands(hand.chatId, hand.newTurn) : Promise.resolve()).then(() =>
+      auto ? deckAutoCheck(auto) : null,
+    );
+    return ready.then(
+      () => offstageFetch(input, init),
+      () => offstageFetch(input, init),
+    );
+  }
+  if (!hand) return offstageFetch(input, init);
+  const request = offstageFetch(input, init);
+  request.then(
+    (response) => {
+      if (response.ok) void checkHands(hand.chatId, hand.newTurn);
+    },
+    () => {},
+  );
+  return request;
+}
+window.fetch = function (input, init) {
+  const method = String((init && init.method) || "GET").toUpperCase();
+  const path = requestPath(input);
+  if (method === "POST" && path === "/api/generate" && init && typeof init.body === "string") {
+    let chatId = null;
+    try {
+      chatId = JSON.parse(init.body).chatId;
+    } catch {
+      chatId = null;
+    }
+    if (typeof chatId === "string" && chatId) return checkNewcomers(chatId).then(() => routeFetch(input, init));
+  }
+  const request = routeFetch(input, init);
+  const cast = method === "PATCH" && /^\/api\/chats\/([^/]+)$/.exec(path);
+  if (cast && init && typeof init.body === "string" && init.body.includes('"characterIds"')) {
+    request.then(
+      (response) => {
+        if (response.ok) void checkNewcomers(decodeURIComponent(cast[1]));
+      },
+      () => {},
+    );
+  }
+  return request;
+};
+function offstageFetch(input, init) {
+  let drawn = null; // the deck's cards handed to this request
+  let asked = null; // the truth roll handed to this request
+  if (init && typeof init.body === "string" && String(init.method || "GET").toUpperCase() === "POST") {
+    try {
+      planTurn(input, init);
+    } catch (error) {
+      marinara.log.warn("Could not roll the attempt for the turn", error);
+    }
+    try {
+      const path = requestPath(input);
+      if (path === "/api/generate" && deck.pending) {
+        const p = deck.pending;
+        const next = deckGenerate(init, p);
+        if (next) {
+          init = next;
+          drawn = p;
+        }
+      }
+    } catch (error) {
+      marinara.log.warn("Could not add the drawn cards to the request", error);
+    }
+    try {
+      if (requestPath(input) === "/api/generate" && truth.pending) {
+        const p = truth.pending;
+        const next = truthGenerate(init, p);
+        if (next) {
+          init = next;
+          asked = p;
+        }
+      }
+    } catch (error) {
+      marinara.log.warn("Could not add the truth roll to the request", error);
+    }
+    try {
+      const path = requestPath(input);
+      const p = fate.pending;
+      if (p) {
+        let handled = null;
+        if (path === "/api/generate") handled = fateGenerate(input, init, p);
+        else if (!p.msgDone && path === `/api/chats/${p.chatId}/messages`) handled = fateMessage(input, init, p);
+        if (handled) return watchDeck(handled, drawn, asked);
+      }
+      if (path === "/api/generate") {
+        const body = JSON.parse(init.body);
+        if (wantsCarry(body)) return watchDeck(fateCarryGenerate(input, init, body), drawn, asked);
+      }
+    } catch (error) {
+      marinara.log.warn("Could not add the roll to the request", error);
+    }
+  }
+  return watchDeck(sendOut(input, init), drawn, asked);
+}
+
+document.addEventListener("pointerdown", onFateOutside, true);
+document.addEventListener("keydown", onFateEscape);
+window.addEventListener("click", onSendClick, true);
+window.addEventListener("keydown", onSendKey, true);
+window.addEventListener("marinara:generation-complete", onGenerationComplete);
+window.addEventListener("marinara:generation-error", onGenerationError);
 
 // ---------- markers on hidden messages ----------
 // For the user's eyes only: written to an attribute on the bubble and drawn by CSS; the model
@@ -2287,6 +7431,8 @@ el.earClear.addEventListener("click", clickEarClear);
 
 function shortName(id) {
   const name = state.names[id] || "";
+  // a card with a cast is a group ("The Smiths") — its first word alone would say nothing
+  if (state.cast[id]) return name || "?";
   return name.split(/\s+/)[0] || "?";
 }
 
@@ -2321,7 +7467,8 @@ function applyBadges() {
   const extras = state.chatId ? cachedExtras(state.chatId) : null;
   for (const row of document.querySelectorAll("[data-message-id]")) {
     const bubble = row.querySelector(".mari-message-bubble") || row;
-    const label = extras ? badgeFor(extras.get(row.getAttribute("data-message-id"))) : null;
+    const extra = extras ? extras.get(row.getAttribute("data-message-id")) : null;
+    const label = [fateBadge(extra), badgeFor(extra)].filter(Boolean).join(" · ") || null;
     if (label) {
       if (bubble.getAttribute("data-kulisy-note") !== label) bubble.setAttribute("data-kulisy-note", label);
     } else if (bubble.hasAttribute("data-kulisy-note")) {
@@ -2341,6 +7488,7 @@ function scheduleBadges() {
 
 const observer = new MutationObserver(() => {
   scheduleBadges();
+  ensureDie();
   if (PHONE.matches && state.chatId && !topBtn.isConnected) ensureTopButton();   // Marinara redrew its top bar
 });
 observer.observe(document.body, { childList: true, subtree: true });
@@ -2369,27 +7517,49 @@ async function syncChat(force = false) {
   state.chatId = chatId;
   if (changed) {
     state.chat = null;
-    el.here.textContent = "";
     el.who.textContent = "";
     ear.entries = {};
     renderEar();
     feel.data = {};
     feel.entries = {};
     feel.loaded = false;
-    feel.open = null;
+    scene.open = null;
     feel.rowState = {};
-    el.feel.textContent = "";
     mode.data = {};
     mode.entries = {};
     mode.loaded = false;
     mode.status = { text: "", kind: "" };
-    el.mode.textContent = "";
-    for (const button of panel.querySelectorAll(".kulisy-clear")) button.hidden = true;
+    renderScene();
+    for (const button of [el.hereClear, el.whoClear, el.modeClear, el.earClear, el.hereAsk]) button.hidden = true;
     paintModeStatus();
     paintModeHead();
     setStatus("");
   }
   showTab();
+  if (changed) {
+    closeFatePop();
+    ensureDie();
+    paintDie();
+    fate.log = [];
+    fate.logChat = null;
+    fate.logError = false;
+    deck.more = false;
+    deck.adding = false;
+    deck.undo = null;
+    deck.openCard = null;
+    deck.chatId = null;
+    disarmDeckDelete();
+    deckNewField.value = "";
+    fel.deckBulkText.value = "";
+    deck.bulk = false;
+    showBulkResult("");
+    setDeckHint("");
+    resetSecrets();
+    renderFatePages();
+    loadDeck();
+    void loadSecrets();
+    if (state.open && page === "log") void loadFateLog();
+  }
   if (!chatId) return;
   const seq = ++loadSeq;
   const modeVersion = mode.version;
@@ -2399,19 +7569,21 @@ async function syncChat(force = false) {
     // The "in their ear" lorebook may have just been created while metadata is not re-read yet.
     if (!chat.earLorebookId && state.chat && state.chat.earLorebookId) chat.earLorebookId = state.chat.earLorebookId;
     // Emotions are read from metadata only when a chat opens — after that the panel owns them.
-    if (changed) feel.data = sanitizeFeelings(chat.feelingsRaw, chat.characterIds);
+    if (changed) feel.data = sanitizeFeelings(chat.feelingsRaw, chat.slots);
     // Mode is re-read while the panel is open too (it may have been changed on another device),
     // but only if nothing was tapped here in the meantime.
     let modeChanged = false;
     if (changed || (mode.version === modeVersion && !mode.queued && !mode.saving && !mode.metaDirty)) {
-      const fresh = sanitizeMode(chat.modeRaw, chat.characterIds);
+      const fresh = sanitizeMode(chat.modeRaw, chat.slots);
       if (changed || JSON.stringify(fresh) !== JSON.stringify(mode.data)) {
         mode.data = fresh;
         modeChanged = true;
       }
     }
     const before = JSON.stringify(state.chat);
+    const castBefore = state.chat && !changed ? state.chat.characterIds.join(",") : null;
     state.chat = chat;
+    if (castBefore !== chat.characterIds.join(",")) void checkNewcomers(chatId);
     if (before !== JSON.stringify(chat)) {
       renderAll();
       scheduleBadges();
@@ -2435,10 +7607,15 @@ async function togglePanel() {
   state.open = !state.open;
   showTab();
   if (!state.open) return;
+  deck.more = false;
+  deck.adding = false;
+  deck.undo = null;
+  renderFatePages();
+  loadPage();
+  void loadSecrets();
   await syncChat(true);
   const chatId = state.chatId;
   if (!chatId) return;
-  await refreshModeTexts();
   await refreshLanguage();
   void earQueue(() => loadEar(chatId));
 }
@@ -2458,7 +7635,8 @@ function onOutsidePointer(event) {
   if (!state.open || panel.hidden) return;
   const target = event.target;
   if (!(target instanceof Node) || !target.isConnected) return;
-  if (panel.contains(target) || tab.contains(target) || topBtn.contains(target)) return;
+  for (const node of [panel, tab, topBtn]) if (node.contains(target)) return;
+  if (pinnedOpen()) return; // a pinned panel stays, and the tap reaches the chat
   state.open = false;
   showTab();
   // The top bar never lies under the panel: a tap there (e.g. the Damask theme's palette button) still works.
@@ -2473,6 +7651,7 @@ function onSwallowClick(event) {
 }
 function onEscape(event) {
   if (event.key !== "Escape" || !state.open || panel.hidden) return;
+  if (pinnedOpen()) return;
   state.open = false;
   showTab();
 }
@@ -2482,6 +7661,7 @@ document.addEventListener("keydown", onEscape);
 window.addEventListener("concept-leya:menu", onThemeMenu);
 window.addEventListener("resize", onViewportChange);
 if (window.visualViewport) window.visualViewport.addEventListener("resize", onViewportChange);
+window.addEventListener("marinara:chat-visual-viewport-change", onKeyboardViewport);
 el.send.addEventListener("click", () => void sendWhisper());
 el.whisper.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
@@ -2511,16 +7691,33 @@ marinara.onCleanup(() => {
   window.removeEventListener("concept-leya:menu", onThemeMenu);
   window.removeEventListener("resize", onViewportChange);
   if (window.visualViewport) window.visualViewport.removeEventListener("resize", onViewportChange);
+  window.removeEventListener("marinara:chat-visual-viewport-change", onKeyboardViewport);
+  el.head.removeEventListener("pointerdown", onHeadDown);
+  el.head.removeEventListener("pointermove", onHeadMove);
+  el.head.removeEventListener("pointerup", onHeadUp);
+  el.head.removeEventListener("pointercancel", onHeadUp);
+  el.head.removeEventListener("dblclick", onHeadDouble);
   if (panelShown) {
     panelShown = false;
     document.documentElement.classList.remove("offstage-open");
     window.dispatchEvent(new CustomEvent("offstage:panel", { detail: { open: false } }));
   }
   observer.disconnect();
-  themeObserver.disconnect();
+  if (window.fetch !== originalFetch) window.fetch = originalFetch;
+  document.removeEventListener("pointerdown", onFateOutside, true);
+  document.removeEventListener("keydown", onFateEscape);
+  window.removeEventListener("click", onSendClick, true);
+  window.removeEventListener("keydown", onSendKey, true);
+  window.removeEventListener("marinara:generation-complete", onGenerationComplete);
+  window.removeEventListener("marinara:generation-error", onGenerationError);
+  if (fate.flashTimer !== null) marinara.clearTimeout(fate.flashTimer);
+  if (fate.flash) fate.flash.remove();
+  if (fate.pop) fate.pop.remove();
+  if (fate.die) fate.die.remove();
+  if (fate.chips) fate.chips.remove();
+  if (fate.logTimer !== null) marinara.clearTimeout(fate.logTimer);
+  if (deck.deleteTimer !== null) marinara.clearTimeout(deck.deleteTimer);
   delete document.documentElement.dataset.offstageLook;
-  delete document.documentElement.dataset.offstagePalette;
-  if (vintageStyle) vintageStyle.remove();
   if (unsubscribeCache) unsubscribeCache();
   Storage.prototype.setItem = originalSetItem;
   Storage.prototype.removeItem = originalRemoveItem;
@@ -2532,11 +7729,3 @@ marinara.onCleanup(() => {
 });
 
 marinara.log.info(`Offstage ${VERSION} loaded`);
-
-// ---------- the Vintage look's palettes and font ----------
-// Offstage's own colours, the input-block frame with its ornaments and the damask for dark / light / warm, and Literata
-// 400 (SIL OFL 1.1 — OFL-Literata.txt). Taken once from Concept Leya 0.11.17 by work/palettes.py and frozen here: the
-// theme itself is never read. Put into the page as one <style> the first time Vintage is needed (ensureVintageAssets).
-function vintageAssetsCss() {
-  return "/* Literata (SIL OFL 1.1, src/OFL-Literata.txt) — the Vintage look's own font, used only when the theme's \"Leya Literata\" is absent. */\n@font-face { font-family: \"Offstage Literata\"; font-style: normal; font-weight: 400; font-display: swap; src: url(\"data:font/woff2;base64,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\") format(\"woff2\"); unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }\n@font-face { font-family: \"Offstage Literata\"; font-style: normal; font-weight: 400; font-display: swap; src: url(\"data:font/woff2;base64,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\") format(\"woff2\"); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }\n@font-face { font-family: \"Offstage Literata\"; font-style: italic; font-weight: 400; font-display: swap; src: url(\"data:font/woff2;base64,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\") format(\"woff2\"); unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }\n@font-face { font-family: \"Offstage Literata\"; font-style: italic; font-weight: 400; font-display: swap; src: url(\"data:font/woff2;base64,d09GMgABAAAAAFKcABIAAAAAvTAAAFI2AAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGn4b8igciVwGYD9TVEFUTACFJhEICoHLZIGfTAuEWAABNgIkA4ksBCAFhGoHizYMBxckGIhwG4ijJWxb2sRuBzKTl3o1JtzVoDsupD2KshsVJZWqzv7/cwIVkRkbkJN2HTsvLASTTgvpSg1rhs7sq2uxDtVd5xoZ7E0NKCgUWHgNdioCCsK9K9J3xX8xz+qu8yd0z7VkLR5DHpfE5Vj6SBa/ObVN/NyufVc7Xoj8MLvWFzlIDJ/Hb/+byFY82FYU5d3zqYvAuIWPqjkvz/M/Duq+90daEMlOTgSSEDcxTlqe7jhxE/l9eH6bf+578GhF0YkoEioqKipmY2SiKEZu/V26qh8dq9K1q+jPAM2tI8ZYxcW6WRK1grFmY4waKQhGY0JbBfphoI3/vgVmvP/+G439FYp+pDb8/z/3/G+ufe6nsIZ/sNAC1hJJ313UKbmQRbIVu03JBcYB8Q14XKtL/+IAH5wr/byf83s74BLdpUB8CEnz96/TT3qf95qtCDBSLLKY7pLSy5WO4utEz8E7eJbXOlvML+x2SnPJhtZce2rBJgECBviHNdm/hYWBu6zBEgxNVkTRICutP/8zVbuecz6U3X7tTUw6XRq1XXQ6qXTC7gBmQo0JzJrewf+x4PJduNH7v7nhdzdNzSxiknj0iX7ss3mOQKEn1L5ehAI3abLFJ3x6D7gErMKA5/vlO/vvntwk7NJuHtX9L5monRiJI8KhGf9Le3vpj7a0vhNF6S7OobGljw8RktKERLj8/zbtbed5Vmv5o7WE3v/D0OojF1WAS5TufZqneW9EM5ZBMsoLhgWB/c/K9uZ7NF6v4IPtkL0JV0hOp9US2584BNACVVQlRZeTpkrVpWgJqy3KLuHhw5Zl2u9GquuWtGfENiucINOeCbJYDdrer55ZVl2JDNzmMcuo0dTsAUFk4Owyj1kGjJzZEWHm2JEzB2nKQRoZqlrO7jGEpEJ0p1zjTkqS+6BIRoZkkRQK+RbnKI8RGIXRGAvweRF+30Sv0KM1TvrFWiv2n5/71PSYlDZpyNrCFhM8IdxqzsLuH5+l7lZVq7V0v+Y4a6+iEBEJIiGEEEIQcc7fLuJZpRN08Roze+clyfd2zQZKl4VFUPEy/58KihWAq1CsETyEgAAhIkHY0yL8hCEiRCFipCDSpCEy5CDylCMqGRGdzIhuQ4jJpiGxCUYjCFiC6hkEfwuW0cvEOua4zELILhzuMUF2aU9TO2RX1fV1QoYFTAsKBHXlxT2dsPsPC1gdISnaHXcxA96Xi4yjl/36vyTUNqKAZL/F+57yxMc9MHLU9+Jphgb1dx/3rpTvV8NT0O92caf3+lgC/XoHNr7MtnNJQBt9en/v132/L/fx3j0XdN6DPhMeO+2h697UDrSrboPN5qJWt5SD5zezhnvjoAfN9Hpp78knxLi/Ce5lQzceec+xZjGL/J/n7VrmYW4nMBt5tfOd7HD72rW4foyBJH7E7rX9+TU/9y3ixryIsFAaJCOuiKRazsnlwPbfuzy3N7nrY6rfEzkVgWPmneerlHXwb11FG260Fx00zqf7sm8Sphj/Ogwv6yoIJ3ueE0JOuAlPehAda7gIExEGC8c/rCaOciqhIG0scy1lket4MDJuACsZuUC+d5JPFXkvVbddgWNe5pMFIQ5/cZBZvh400IKZIqqYgM+naUQrsy/Ew2qbAOCBhYIMPUHEEEsS2VRS/WrNlOMEaG3bLZJLIlPhtpmP/Gu41RAHltwaL26s66fr/Y3r8lFble+zz2MFfL+vQuUeAChQmu7zvlUx7kkXEGm/2KtIvfZ1qFQPlFnOYRWc2lum14ZxZlCJu5JUEscIdXb5FhqxWUT3UZfYfc03GnsjDN1jQBwUM6O+rw14u9PEeilcp2T6ZPFSrEVJusQK6RFoKQUwImrWHIUicpanpLDE1qJ29MC/D5Aqq1nsE55FavmuQnCKFg86f2Dcj7IbwRuL1YAsquFymfhGYjq9+UNCl3QyqtdYnll1zj2eY5yPgjbzbqPfB+kemeGjl7OWtFJrk9KckbzgdEwBt5Axo7BGFjZzpHDehdAAewW/7DcPkoveCGkxMmEGGPThW6Q2FTWQ1dRTIVnwtkjnbAQUZDgcVRDMp5ONRxUNoztIcvdkCHHZNa2rDQNPsbknn1K5KHMNmUpV+DuqfCOyLFGapUxqtSdz3oPV76OZIp/VYm4EIeTcmg/I81hn2boIEBdTRNcOQsF/rOZubjEeE+F+zxk6XAE4bUqmuj4A4U9WRd0dytK9rUaLGoQM1I1BVU336Ikz/7emZsms9w0bKhUxKMmOtHETUcbAD5RSQ/bnmSsGLUrzLPiZGNsXzSMK3wlT2f9Zohev4cZC0eAY7KjSEUA0t8nAm3V+umSsxxjwLIizh/xRw+KQU7yB3+7emgpWttYh69wbRaePsGsUqtUSgx2RC+jSfI88N5x7xL2n8dgK+o7+YVlmENYECjyxIEgYnfdd4nkmOnZ+fg1rlPmVEeV3JycxJc3lrMjkTS/VAbJOluf1NjhBdeUOzZoeMXDTWGgNhZDrUM1admpVL4CTuQxLMT/G3XZ4hbAN2i5xI8sQ5O6UOUcxaNluBJ2iQhtU8bMukMfVEyNcdh47thaArRt6rw6DEjFSbzBZ1HzTUT9eBBLDKpyBkGRtoudDi4ZdsUsmd4xuaRt5yqAV2bMK6kxwZiD3youC5YUFaQDeDHaBCmVNmc7E+fAgbJW1qNCaZFayWfEKtYAJazDCwUSvWUfZntVNfz+6NuQ2h+wNVxwfGbK+Bb0YoEe57s9yq/C9n0d0WHrSYX7DZ8GefJlg+MSt6QjLKqWPan0zIpLU+p4Coxib2cfhFWzJKcLgJrOk/fus17qTivxMNWa20DBl4z4NrsEe7AhF91LKr1jNZuQ0j/n4e3Y5W2XgEel+9psrjytlN7uK5Fl7PmzphLxiGBK4vjRBMpRIUqZMngom+fMqjTTXnWZ8rccs6zXyLfosMKrfmL0GHXfKVGecMdMld81CiW4rtAlRXcqUSZxxyM2Z6kNyaq5E3Hg35sM36jCKvwkFlMX0QrCEulvPYt9EshKFTRJdFouRjDCUuVLkIHLNTp7ZyDeuAuMpfJBRpAQPr/DWWslJlRpcteoxGrQh2jGGybg6jOg0htn4utcm0WMA26AhApNNZW3awx2owg477MTuQ+NkdtvDxV5cRltt6yxRQXOZyhVM7aq5umZq183VDZO6aY5umdTt9Tq64y4lShKCi8bD40p5x56I1Yo1CRb9Yls7YN8zqUnRuUxO/jEXLtwoKFnzUnAXiWhrb97hPvwML9HvW4k5KvDFYakeW6AQDE4Ia2fJuHwT0qRylIZxZVyRy+QLj1qkQHDgiKxcRa1aDa4YY5tquXaGvDDMwnQPIxhwYmQhQrthhE4jcTLE3S9pzwUKFClRpESEKBGix/KLjoVzM1LMFyBbL39l0/dv/aGz51Y8dKGc9n8Kalo8pXiB7LKlz5u+oq45HaYMHO1UpDPG6cK/5Xap+/EGTVhwGAxh4BirZQHLA1Ziq83gtRQsU1iusEJppaFVmff9ZE3AWhZnY1PQfLNA6DbeVrcnPnInKKOxsDE4uHj9/IBJmAMpRzJOnGfLCRWiFrk698F8Z/sHBND0INCCBAv5zynUfWHWhXsqwh8i/SHKsmhaTEBsQFxAfEBCQGJAUkByQEpAakBaQHpARkBmQFZAdkBOQENAY0BTQHNAS0BrgDGgLaAjYDhgWkB2BFCABizABgzgAC7gAUGAMMA+QB6gCnALcA/QBHgEeAZ4BWgDvAN0gQAVy7Isa0mFLFrkl1cMRG7kp4IoRJFiJcpUqIyqPqqtJmpRp157mGadzNFN1wN6Q59+AzFIDNE/HDAZm2Jq/zTejIBZRiww+vWOso65g05VUYpqlFW4YPjtQBzsg55a5Bzcy684u0ry1DZZUvHhEysDVgWxxv7xzEH6/V4qrDjPSoqrLBf4MvPRCSaDFUtq/hJXy6wNOKBglSEgN335ARV5VplnVQHVATUBpoAZ6ZuVvpH0LUjfaPpIKwI4hVOGNSUkoQLv9c6UtG4Podlz407DgycvWt50Ne9SiqIoSro5IyIjUl1UQDRTCf/uG7D435obVZ50En4NKLJiJcr2yQbjq8eKCVOvQ3fXw+sNffoN5IOsoXxGVLOMWGC04joNDWeDvkEdEnDMBU0Rv6ICjYWNwcHFywUMIfsduccKTJkCGh48edHypuv358RYEitOvASJkiR3hoCUjFSkSZchU5ZsOT9aLsjzRn5AAVFooogoRomyMblFbRd1Up83WNKoSbMWrYzaor3PTQEd0VmzzXLdGj1Yr/TpN5APBgx1w4LJmNJNDZi2280As2TEAqNfazmywpKVarXNBGuNjLloHHv7j7rgkk9d/uzvmRHLyLgtpq6+QqCAWQ1x4iVIlCRZilRp0mXIlCVbzt7cgDylhopGNGnWopVRm447NyM7e9UKhSyPSbJx+cURdQeleYclfFjGfCNLYjx71l6Gj5GzDI7B+bDJuOC+0N/pALQD6gOXgM26EJY+5NotSl9HJ9M+oc2j2alvHmnUHdQa8jC5B8dUsrOMaJDOvrSvI9WThNwX8V/iWMKN4CghxjoJ+UFC5uH/Jv57FNl5VlI9X7eVwD0WjOLqsVGsOkujHfNuYfIQ98PkWYQlhHziv08cnZ9pcn4yHn2XU4vmJp1l5iaJUe9Qn7H/RQ2gdqD6UKtQi1DtqBpUFOVDCVHEMRYp6+bq+RPTh2/LUskSVKJI+oDQ0tLPJr1k+dvTKhjhegO9QUPfabThlrS2Kf3QX82ZSg5b1v4mWp0uwqKMxsLG4ODinVT5bumxLGbZxGYhsUvhhoNLDLtsrlHZSwg3EmRUjVpM0mYBkqkKdsy6zoNlzSIBSnpaoAUJFjI7VCJMKsI3It0frRSjFStOvASJkiQzSJEqTboMmbJky+lyI+Vn6Rp3tRA5h3Y11OS1SJ36vEGrUZNmLVoZtUV7z6QjOmvHjIl+jVqP9Eaf9RuIQWKImmwEQZBZpCuuu6rvWrref4N3E7vldrAmANgLyQkQYbDnxp2GB09etLzp7koAM8YqVxEhshbV1TU8PP9d5O9EVahWMxWtYVJJ6Y4ZXDoNaUhDGvaPvXHlcNU114fMrJAgC28Vq41lO+QMa5tktbp1etbbhlkH/IPfZ4zPW1/8Yr7kfOUbX7O+kfs24DvK9wyq33X+Yn/PZpx+CPjF0K9D/LaOP3LzT/Fc75dkYd3/fghO7GJI9hZxIovZG13gcTbEgRWqI6GFKushpCfGYtx222OvYy0PdVlpRV3cEh2Dw9kHJTsAaUuglUl8jdqaXF8bUr1UL2VSpqi9E5SjEsfHOGEnnZr9NDJoi45lWYnxW60sxAp8HEEayl4av9oXL7O3t+vAoerFSY1EPRl7PZuuAcRVu/7UO+DuRgz1QAzaAPWGJtrDM8KudqXyCq5VP9ZT9QNaHDmq8b6qcDNIb4/DjjsRJ+2Uiwc3TUMavuQAUUtJGJhGTYMatK6okdYM1PwOadvetHZjEvsaE9e8DyG+CxuEvC3BJJJb3gQ47NLqyQOE9uCe+yHaeN99HUjXpHViX2EGDxNHu2MKF/u459H7nPRi/iIWceIlSJQkuWwbKRmpkiZdhkxZsuXUg9dmJ7+iSqrVaNCoSbMWrYzamHTUli8SQkgiaTjQcV86aRBnITnOwmjmODgRTjq194rgquhaul75xFKohIlH2T3ifrcpyHCN01qMJdM1pbILgT84Lm4KB56FqpeTE86uZuKc9woIS/xNDGuCFBUeG2+aOO2yRHs1laQhCwQhhFBCKS5crxJYlg0Wz/OJL4lZk/kcb+goixYhSVPxRyAcivFUrOfivBDvSCiJkvYaOGmUDOTp2OliONsAPXBgIrHi8cOMBEIIIYQQnhBCCCHki4t8QeFyRhCuIBCekpQU1qxFK6O2KqTC2ALnRoNOCsRebKdR5xjdbttZK1zCRbrR3pI7m9g0rDHhrAQYWOFWMk920nBJUEU5volrFrWBOMODSWHG7xIGakgqeJRx8e38DKj2ssJ7T+1rNhtsiuHECuK8Ga+TsMpOcyyOszyS6DRklSVIK8+KSprHJUnzQo9TcldIx3qXEjZEXMx25qisL/sI290S6q4u/Y6qbtLQ2FhiszBYUtkbAgRZZJRMmHHINWsnIJERslhmYlYDcc+FxYmXIFFSxWzTaiXLetyKqkvKr6l2qnq8qXC0Eis+kQtbTnOpzcITjajdDjJ0HtLm4VXXlPJrRUD7Inv1bMVRgukKL8+x7fXhgmOI3yNgUipxuKb6f6prkjyW7oYsf8r2Qo45xekrqaGyFDXJNFvX4jqje4bdsy9gwoqjEvfcdp9SlYAmpFkHiANsAmwDJAH2NDeaO01D86B50rxoWpo3TUcLCNBjgVgQFoyFYNFh4Dhvw8ZUK/Exk51qEClDFXqdHMdx3AnH8yqpYWFTJw4h+QTrcHfcihM46dTuDWH+7IWa6b0dm9LlstRlq+Tk7OJ8KymjssQ1jdG80hLG2B3W8Ibl8vc07FPZFcPeJIV0qSzVYFKeynhKlfPpvGLdlm43ybhvVYo2WA1ZsuXU0pJDbrAK4+6wYxD9pPw68ROnciZ8nGnzuSI/eN3SjFeVP6ehcaOq8jRLspIFxYrbBY91jFK/G/XWKNyrFXhUWOW2KQn0xNV0N8YZl727B+xNFcpGjbNFdJFjDUbVEQ0KNBY2BgcXLxekSMieG3caHjx50fKmi9D92WGCcPsiVCLZjXJsajCE/bUT/y69O6w2Q6LyiYbWiXSaeO+jdtwDqz2QpIaYBvmC03FqR2URmyijsbAxOLh4Y4CT+pm+ydvZDWs7RokuHXCkAERvgYIEC+lCOWFvESLzaCTmUvVRuXlJQMXVrfRVprZjLH5eTD2gxeSKKTY1n0HMMmKB0WZqWNOBY3FljGuR3yHu1mNTqxpVWjdL1YRuKxMuGAlvnXHV90UXWh00pU1VVTkRichjs4zfKuOqWJonBnYJq3zXp3bx7bIL/10NpGscjw5FzKKMxsLG4ODi5QIgZJ9PCnAg5UjGiXP1rkMBdxoePHnR8g4f+Iaucn8dfX9gQFBAsBDhbZSqNhuxIU68BImSJEuRKk26DJmyZMup3ysaTJzqCHChX+GRQgoZaDQajUajSZoMkuZvAJhp3Y7f1U1DGjIAgCsfvz/UjcmNu1mvFLU9wdv4geupT7wUcHlRMb5craZh1TbQRA5LeH+rNELZTtDGwsbg4F6WZ0nvGcAJ5U0komtq07ictak1lRHlqcOQ8ZiBFL0h4FhmeXQkgMrpABY2Bie44O3KdfZECCHz0hJ4RFREehBlU+PvQYxPjZNn9WYWXxtV8lIUkAXvUL9nYV7w2QPi6RmgEGqw3ib36u+JnqkpiTdeJLjjPQy26oENHH1CPlgGfh1mNyQB/PaM2u9Iyt/K39q+LTo13rM8j6/5sEUuR+4Rnt/8sZVXfoO+eat+N2drxP/YX/q5zjjOsHe3wQI9GxcUjYXD5nj4iVNmnNmzOQi9NLLg5qRIFVx4YUcXRl9e9/SLOs0dGPrv3feCzquMLXVovcrcYEL9D7kyrfia/o4e5F73jCD9pnDvSSBsZLHMl3kyI7OJbeogJGJ1JAKxoBfCaoTx9+0lGXjq8FZtoNmN6EWO93cDqU5uoqry2FX7bOLZvyBPb4/5KNPxiZg0qlQok0GcCEF0PKk550X3aPT2rjYPpcpclCILUArMQck3AyXXdBSD2Wi5uo3sM6u9NbPKrJkFZqYaECzRlYSoAdFIoKexnxMcvjJmPkEh3vEppMDXkaLU0uCjr42ELi9Wlzs+8z2kifNJbR0/+JMk969G4sLZ+eg4O/ZZg6LWscTawIKUqj8SXfBRhD0pVysuiQ5HciZSh5yUyAHzWEdF1Zrt7p6WKVEmnjehyJXXzKnGYFuhKeiiKFQX2QCH8bD4LCtyl+BysBG1oCXiRj5A2qTRBUaZJtXAZYCUTLV24USVMFHipMmSY4gJ8QkZIG62r6MDvZE1PttTO4WK6uZ8yM65LOA3RIqnUCU4qmXvBSoijRkrdpy48Vp20TJpbzLKQs5sItrZVqS9Qxqibx45tMNy59x875tTjSeBVXU92NAnVjrfyNgnJkw1fVLca/etVMkVxCe7008H3E+5vT1r7WcPsOClgr5B3gDyT9eDbdEIgosGG6LAnqhrr+udTITArZe29hEa5PKb6kyEAUWMhaAgiwglZGJJPdC14F5iwzTsDlZXLDtCHPbHzz7CTWchFAmoqOu2Yyd3+gjNonm06zeP/4P/SylTuijVSo0yUBmhTFLuVglVy1Wr1VS1vcUCtuUvwsfVs8P9766gB8098adSqnS+JL0y/NPsHGASiyvw/5nXL8r/KcB/v57fcOlTgHXvzX18/tffns8/d+jc9HPTzj44extEHDjLZSCv97H72XnRo5UXWuPIy6f2ueOIN7HCfXedcdbhUBh33JijdtsTLmEIBwfcQ/AJiFizY28SB3IuFFTU3PjQ8eMvgF6oMOEiRLngmIsR4nRkYhikSJMhV558BSpUqVarToN2HTqZdesxaMiwyaY554Xz4WOH/V6x4HWAvz2M1CML3YgAJzyOwtPwsN6GOEXAAxNRWmeRm/7xt38dxKCwcLFx8AhJiNmw5cyRjBMrrjy509DySCK8hAgUJFgkX10SxIqTJF6iZKlyZMqSrUyRYiXS1WvRqIlRc9hoNaBXn35TmEzlrS3aFFr6tb7mukuuuOoygkwLayB7AD0TsiFs9QXsfAqw4G0YtwGKmgFOUE13loANIQcGzNHEAAA7GpLspiCJFNzc0pl2pjTqyVxGL9aNKQgL1lcGGqDKCMWKzUeGUdmU9vRJuW50ULowgR6LUu6zUmDCwHYbzJcB2FikN2aELIEXMw9ZhHqWystmW+naVJLxBOGP7ZZawIglmM/OLoSphLaLGmQCZMBDFDDNMiUD0KDuzJ8lv7btaUbWiQdlcTMv81YU+zWrHMVoDjMV725TWtqEqsC8iqm0LI8fA83q8fw4eShv+QfKP/zHEj/x5cR4PTrdSRHnc2mZpQWtVnmMRELkhFS0mqOEYIrM/BhWCxm048jTSB6FCuPf1UQNzX7eo+2dzdxu72F5pLUjbgJmsajyJCqVCIDRbbFspPjAMLZPMsDketYxl+vVEXS6GH3iDCMNgJfLdyjXTAOsARCCZuoZGTwzdLw9XmrgUiCCjIgkIBFUBfcgnNdSI51pS3jzKBI2oTs4mNd4EZMitWcj/cdB2DjAbCJGegPV7VkWcRB9+hQ3WRaUXhy8SZ9eIEG7N+kpATYYaHNVdfvoImy0LFssvWsEZFHwOnJ9putzvtdiOMXVkyxWVmvcvdWct5uOVE7YI2TSQlw3nmERJA2KFESbIi9uEN5zyudlKDJjkMW7NzoINiGlF8jcOOxNn0A1TRxxHRrKlBRJaPlWyauwMeIluUAWv21pTQXrEgjRwA+t99zijzfV85AaV7pq88RD8fPAaUsejpbnrTxFBH/nTHrd3P4AVTK4uq0zf/iiv/96jZwTc+uPveReqWd2QndVSi1ufKnSctU5/SlApaBSqbB5xXygTONZWJZ07efbmFS6NBw6AU8btPUXkOypLoq7xwJSu7VAyVvA6nZj1ShsHHilp5NxMpMOT/gbbkaatGiGuhd/PyGQZk2Htemusm0CODWZystFy09Q1PlV2CBMig7OlTk9H2wZziwye3Fo+TaNBJPtu3K1jRVCPKWU6S3WG5xhVLPSKsUtsYtQMYk8rbfJCa9qdTfxd4Zp+cDSq/tKOSEmzOHiDRbvzSVQ849EWpvW2MV5+6F+DdzNq6/RGICKAklZEM7Br90OR/d+iechHUWe+aEu0aqMoqUVu00D4KTGja0r7pkn8OW/4R7l1VbuYioDFoH2vK6WgIl2BxHcLOzBlAU51aDLsB8H/MLv5Y9rLMH+Kh7cv3RxisLBSLyygOOumyYSY4Kbpes7Q8ZkGlkN8/ShhzTqHQpSW3olwd0E+oPXG4igI6Nw9ZlvURfaC1j6g/VEEyC7Q17eTX7ux+BxjDG8etZOhtBr3HzBdTTfzD7qteIPdfiqN9Yve9kilPArrIt5/GIReVhtmGBYcq0vsHsyrzNSO6cQDob439p5fRoo6g1CMlsm7rAwqt55k5yUyugqsdMUdAYH9nplTKh5JXh+CdfkJ0A2gsLAdwP0I83yqJZTw2/rFQitDXxoimTTRJO4oM52NR364WjcSbogUk1bxanjcwt0kiUFNRny4fF5wwRfe7tm1G1zyJhVSkiGizwapO7yBpq6EDcBvbz2LjDLRVgk/cFMLUY5M5WnyAzmhzx0HpcYRgDH+BHPY2kTjkYshy3DIXSiu/kqSVYznCHGFOAdBjJ//kW1l/syZKQnXYoIaEEGv/I2QpNsQqpry50zsfKBoFwxbJdOYTC/N5H7bENAXpGu2wgYVVHiZ+ol3tMnGs1nSE4PO+v3IyWxrh5NvKfP4MMlyepM9sJXwBiupIt2qWAGSfeuSw4BLZFU9ApWbgt4zOBhK+/qF5oUDh7il+ZwxbaJgAItRY+SWAnqO7Qvp3nWREoNGJzkrQdsA+OudsutxIf5gqrZAsXbax3HMSlE9YaT88hisqFoVOKlTBNVd134EYgvNVhs7PH0ytO60VND1XFc21Z7Y2U89po5Kgp/bKLVBaIPdQWUFFLvySq8NKKjHq9vWQ0XpQqGD5YDCqhPok8nuDyg5+YDdw+lU5C/32szmVgilbV5Yf2ywHDanRGSHPL/WNnQgPWUgSAI3lm8eWv2ts4CYFLmYcGkhbdXlBnmnCVzXKok7bRllhpX5api7mBdGxh5sVytQysTKTD5ZuuCAlX05OV+Xh2JJe3vGc6i2afMcOeeL41Zx8y2G5OhABgVerm4Z1dnvoke8UARjdYzhe22gjIq4NoTuymGTt3OEDDBSJxiHH/VUYAZYlpvcBQcHreeLW+ZaZTNavd05TCNaEwomDvY5Fv2juj2JaSSJ648jhdSytWxwzFm0TpfNZbXY6JG/TY2ZFBS74x+A4ouWN9zu+T7dc5kXezvMpx3V65I8VDk6aElikaZ5I24xRIL8glY3tdBTmhO1lm29qWCSdJvLL2tNcyEh9XVRGCRylmEQZDzO5zsStqQvU7HsshQa7xdr0mTUsK6bxhJpMqW+NFGB9Vs64/quZsHEkuvid2YTH7detI7eMzjvQGgLJwBCYFtepoG8h1OcRBtO59M69QIXMDrtAOeKw7g/zbx+RG8kbbEHT1ll7E+NqBFzQ8Z/IjHksO9jdYNqWHWNBAuS430WDOrYnNS0v8zIgd0DEWBkSN8NfRymKFMxyWjcJlWxvCtvkLfy3tqebB8HTSRoj0dqv7PALvR1ZmPrxDaTNmMmjgpHx2RksKYXp+7nLdeNsoqJ2PbtKbJJ3UBQU6Op8tSud4zIsS4jauklNwgYOOZ/uXeiZ12lJacGsxKBhF/BjXuSfQng4cbI/xhKDmNWOUbhTrXJoOT39KU7TCCN15C7jaWtxgpAym2qYUhg0uJWresYqzafU6I2nVXxOV6aDKNwb+xpr4J5iJTzHJilQ2TwoMOTSYg8cH5FqNmxduQwjPiCREacThCRi8rwQMypYKNpJLG07jLnBL0m7s5JFy3XOPSGxiVoteC/RGJYbMyr9clPtK4b+NcMuLMNqHl3jRTSlKRUUb68ecLYltVZRMp6k5WNHD85gNuf4s7aZ/n6CH8Guc/a1RkBsveVRFByLthVxzJS7WNnC43PyJPcYeUwxErggk67yB8d4B5TFesZ+KqycLCHFtMVPAr+9XLlTHit+KscGOCto6lWto8wCm03+2PiiPb29NF9RrSQnL5U8491IfZJQIzM5nlbQkkeYPpHGi2D4AfNy+/0SRl/boYwbsDz5/HFXGvICN8LZH7tsT5LXnQfX1xoa/x1rcuBZY3zuMVtE9uBt27/IuZLqkneP7Y3cwYyx6+vibzNh2SGGiulvs4pFEOvl+/0ncdDfTeHoEL0e7EyixDPpZ3tNOVu6RSFfHiATWysfIyVTHd6TRA4BgBWRvLtDCkUmd/nC9QxFpbQwBpsczctQSrDRJF9BJ/ELC7Jt6osXTewWEPM1VWGoxXjYDgdhaoG0I7N3cTrOBCbU8jqUpJYhwXMuiJHiMO04NNiCBAbRQ4BQgN1hMsU6v0didoDDsQyd0ptKb7Qjcmaq1JpR1xrETItkvDxCUDbSzo6OSThPZUOEd1Sdxs3kYBEDMg0Gxb/WAYqAO2xm/3z/u6v4C5oEaXs9j+/CmP6FpjF3mxb3ZgXKHk46A1DRM2DPM5DZz4ASuvAl0ZRgW2wTZc/ocejBb8fjaPpajkotS1MLOsW9V1FRq39yvVL/lZuBxNPRaAoAERf4QG/KnrpEEzxqDT6urJ2PoNGAazT27n1s+ENn1zgBu55AyMuDv62D2j5xFnliuZA7Ypo4HMNpPonn+nVbqqqiondPEOJhDVM4z/WiKFGYbRLktxoz2k6YCEQJaF0oOcZVlsGwZk/uLH6QErOwKVFnYp+fBPfb/gn6mGtIBZY8L1vzVJAZYa9dsHLQg+FtvsPFD1OYC9ceOQ8u50fdfhSrlOZzY6tACHx3LBiKYKZwDMrr5naguDLLgb5fVtIcylIYlboqZvsuhoQHSsI6mUGYKmbrobB+/a9I54wgK6kcsdltIrMbdXkgTkwwLZQSb/hMwgdUW5wd0KGE4aqgze0e+PYZb44+HOUJFnENzeOD9Lu3KdbpQn5iwu2gvjWueB5eWD07yAP7qghjdcxWld2l29d5hm4REVyREyyv4+JJiGwf8h7XtGISz2JlvDPCAyuttqPlX/f2i2jFNSDEYNeio8IE0/3LkI5WDfFL9zNKr4Q/yKnNc/8SJTHItpWZ2rxEl7wzpUbNeHbyy2bm1l7D6b0ZO6tqi+7+l9QWZWrhIalilvn8LFo2veuwQ35wu0GQj0xLli88tBOqbd55/ebIlgh6yNaaOVrnuFy4exXGZw7X5PF3j3JtJr4/0mirGl7R5SriPGTPG59Owyc9YR2RNJVbkbnGcoY+nJLtVLdUT4t+lyxJpnJIg1xjCKQmHvu4O6Xhf6JGtMWFY2Z5eQZAvRWki7Fuut8OQB5T3EECZah0w3uz9Ksdf2JVl8B1PMWKH/zLAwGHS99UEKcvBMbpnKQAGQTxn2gUbakxCLWZRPGqpVgZ/4ZMBbwf6NiPGrzVX3gXtwLsQ6JIqVe06DBNM8wya+eeo6Vq58Oc+qhInDzm4kOjJNH2AmUv+al13S2xrKksUdJC4wZLtkl9Mbto+dlTghsYLBcA73jPAvBUrwqFjue93z5c8DJo+PyWHUTu41GmOO2Dv3EJi5lyvalg/J4Jm6uzRjSTIyY/9HDukOCzfv0UBcSQjRjC8MQYdOOteMXdF8NQmzs18onZ/aEtHWuBGZcYRNWI7xwaA8WaEVm1Acbe4Mq1wmxbVZKmv3c1hBWcCYth43x+xYBGQLsadcIRfTfXdK7CBE8ARDYT2AzR7k4xThSh0D+bgER4l0RP6XE/SliD286fkDaMjvd43b5b6/u09wX0507/y0jxEh3B30CUhgvzQxBCW++lRSf7HspN3QYtaQby/0KIco/hEPoJ7l1IMN1betufLVpaHNF/U/NtkUWZwcUAIgEVnxKkCIDBJVAyCSVXPhJb/Cf4lLRWqeCZmTNvy5Ko1wzTvcgz9EZYeocV67HGH1nQ2LN1bUC8RZcLkckmQXwXkDE2MAt/E4VnbXWIz3muWRzJp9xidmcNb8wol+MPO4I95RdtKqhrS4ScE9Lzq0HwY+QYZb8Mfrk/WslaB1m+9lu8mgtVz4PsjR/r6hK+5b3JtKpPnauIM1BL49B9c3XSW+mM+RdvRXbwnzwLsYd6d2L/xe/Pfhv50xnGGMaSpAUP+ZY9hYIU6z98+sveW42JNYAPfz9OiH16K+BED410905D/CR6Xb59CNwoN5b//N+jqfNJkXmL7vgQU+cqyXkchr//+HQDeJyG4330gsxpUV5aXIvUHTZFbBsKeUhDii5NiPbbPdpBdr/AqpVZXhNRUZobDVViJUOY0q9OsUShcN+CVyR32/Kr/ObVjRGElpL3NmWSotmCjXl1PMS4m2F+V92DgrsHdFdU32KFmGXcn8DqFXfw3YLoMX/382FSaRx3xKlBT++H1f0IeeFM3qrWlZOI76lN64s0P8m4fi0rY8A7lPC4CgjFIivz8t3PgPXIHFo1pH7T0VW2hmT3jP6181tjijeXJOYRnQuK5Bfdg9EUea4Z+G/a/XyF0Lur39Me/OZZ/B0oGt7cXk2AXCV6UHV41ic5Zi3r7Meo4lbWB6Dxx8YoGPfBsL4YH3Q3jI2ebd/KX73uZ6PHspFvVH1m84TicuJgNKMnDkz/z8MFVWsSDsXtM4K7T3/eoGa4MsU753yp/NhzTesZ7UlaOjxo5Kp1XmofUkHYjQYoBHagaGWIWPYWLs0+NjETLmeQb2eULiwqCzQQc+FzIXOL2XT9rryT7ye9iRRHAK7VZXWv/ZxllnYMAqUncoSxiRQx/Gb9vPfccP4Vf8NsFPfPmaWVkmsv7wN2wN76YQjiJ6wwIFIUZGIE7KoGwZ/O4HY01kOO8D5rgD2/+2MM7ex43Oi0015COTJIpSQuy3WJggcxSRfbcGWi42XqsKEGl8VekHKOiI+kz4hEPay7EpM2j6Snzs71ghHi4IYKs+AzJSZgV391bVl3UW5r/fODM4uLKutmxekWttVWulYX61y+aodKcsq4/puiocNmety7AIyM5uYElme4Zsa7Irl+QNjx3mT8nv2d1czlU//T329d71+NAtx9YNLt7cKXn9XR6hdvBUalOpMSAiZaxldWXFNEU2M6nki0CSxFMauqT1wjHMvaw7fl69MYgfdqmaH1Afxp+i/yPuCSZ3pbilqqIsZX6V15lTaTcvHV+Z0lVut2XWZWXMB/j5NUSszx8O64NuXqoR8rcTMvUBdq1yq5C/FG69Xhi0pZdx0zCCHsB04+8Y0zeREB/OTIuBDq3YY9YLfFZLOTs9lFDZTshsvuI1OYQCp1k+Y/CaxAhklk0N9veW1Zd2Bl299UFxq7tivNmVnDzdzmtd1qPMbVPc4oM2OwJ9U41dZW9hUv/78F3z2LNFKDulJmJoryot17VVWO32GrdpYaw0pbXCZs2rcRrmA6LuUECscGrV/ycj6UYwMJaQweV9ssXjRSZ3RoopVGU+nDD7/1WX02d+1XUOBM4/KleEY2jSNVv+VdRfa/3UC5zYphP6n5dwzalRPlPCl7Fp2Sf+/Oj2bTetg18mY868XOEQBbMFNrmKn/9ZmK03hoSvNewEFjV7p3j7p1tdNff/FLGv5+u/u5Fo3gVsUzfh6Z5SpnzK51+0wf1ywo6yC1vq8ewy0DseF1MCtRHF+AlrxglrEuHRpp6csoBcn11oEo1J8IFbvcTYi1iETF+jpvhuSTWubMsY+VzWymR7cn6YHHscKyAD1YWJX2qjlPJnE4Pk4TkN+FNLfMQJ6MoSPLCxcvqm9c61NmKat25a44U3Lm66nm3qxO07dXurSICo00e6LD0lzyNMAKoycIt/7rsY6lP560R/DL9NH2m7Tzfu/T923AmRy4FmQ+LetBKGKx7MQF8Oklbspd2TjTs1vjKMB5IX9hUPiX9/eeyKhfH5sMvGsuuiZc3bv5mN7LsOrIs14RFPKVcV3mKI990DxqQrQy8J5TBQm/rg/s3EAZYynuKtBEekXWTilfH6nWcJ10Qy4RATYdqYTFpvF6nZG4LnxTPM9gUIHCxN3kLC9j1q3mlZATJQV5TkkzVg+BzX1+wRm52p/Jocl6A5u7hIYxBdR/IgdNKXUtE9QQNUxJ+l+JoliMgc9Mp0E8nOAwq5mtP3ZEpM/f+/TmQKWM4JCnDDyekJiVtfqBnmApXcPzVZ4TuspphQnbmysdDO/zf+GD1trY1VdAt2/ipohAoFs9LfOqntVvFUX0BccC1EHzgI81h59AC/niF/MBawESHRrBsvoHUxelXfK5yHOTxFvJji0BQ/1pisRm6VvSl75Xh38k0p9VdRI1QsaIa5AlGzzAFWpsqSncOAkKt2cGfK2f/IQfQUl7mjmilsnUMvy9Izg5MU8I0fWqlLE+LvaXJLstXjnTbBOGugTAUML2A9c5r9Vlmj9eYVSmXXf89Vu/zgXWva4PL1dj5QiNpCJp5+UrOzcQBUfZlBOlUDlZxkeaa3yuXdPnJAk8+fllVUrDZzR6ToS0r+9iGeQsy/ChvAQv6cw2Pmk0TNUge93BKQBoA3BHtFtm6SV0OM8FySPI5OahXm6G25V0rrLFkh9dPwpnnrjDdcVVNz1JXGR+pmQlvmKO36+jJfuiXNCo7JVuAdnz5Vmy1W6picVCSSA3C53jxn+hyWhJbtXpCw5Pfff3e3lpokOZo5f5y3o3Ne7kVxUxhLsP95GgMknxXdmgMlVvWkLyPkw/hSehEnT3rqvYskeQZIHdwzeedcCxZECIDVt9G6QrRQwC5UuXg63k9ntMwRGfnU0nUDRcBqWg1U8kpWbtWnmu0Z3LrMqvRlTcF8rhN3ufQB6UcupVwUOBEVZDLLPu93EkaZuDxVybIizQDPlJ+jmJYU2EVFzM9VDWCAP1thxcMmurFlqW5RIRDlvnDzO4TETTwEI0ynjAEdD9+Z7g0xjptW8Z2PgXu7ks+xtc9FPhc44tBNxj07iRkfQ70UwoXU18rnKpbshhTKRTWTcd/5z1ub8Y+chxyDgRq5mUM7+4bOkXA4pq5nv4U898+U5l+wC8MS+gzR6OWn3jtG4uXQiJvPdjK30hUCPA9DWwKfJYqew693Bo9DLPgmNAek7O4ngScvfga5MpG0JGkLqe5UmDOACVK9y9e/on+5MJs75vbayIHqXjafwZY+sTKF6Kb9nJM0ytIL4TX0DYjwxzljT56f8Sn2Xt6AjwpoHWouBXfDb95a5Y8cPnQUC6ysc5YwaPPsz8Z5QqTNifvJyR8uBvonXaKr/olHsLW59/+TOHKliiFSajF4fYrrEShO99H8TMh0g3GIESddv3PGdZCLOggjHOdzJrm6VjjLEwGS1ZfqZGVpDCwSuxi+10z98aIGydijBfspuE+XOyZLNf9Z+dxg/LwosD+MNMZoS7BMa7XHslImetMZjWmZqay1ZFjhMVlpUJFVKzezrdgiLbQvrUkq1tFD+u7xcjs03+cpiBqpAd2g7lbpT9OQ7elD9wPK+Hcxh77Ma7qHPXZMSaUNSgem+8gbwC+67+Q9jHVfi8dZDMnlwY0D0Swbb1+h4s3EOZu6fLbnK76+GnO6jd6UE0kd/UuFN02p7FEaMP4L4JxQMOejuOc5a2Hl35lIdx+3uO4VFuGdFBDPtIWKFXrJzWTBgRgm0Bf/mkIjLWCkDgtGQ37BdJjIF82TI18iJLx+FcUX68JgG25aMiLW6YbS07Yhwl8ETXBEMF1GjKCUivTtO+F0B2oLGTNGXbPTshLULGbg79idrIFKXssrrAaL2Z7JrQ/ZefSDl2TbQ405mJ6rR4Mh/mzkQo9slRcBprvIZOW/DYSVhZZONi3CZFKJVLB5zJg99zCcQ+fi9ihdouK4EIgOeYAJrXqRjDH4cJflMTVE7XOyjXIbMpYN7wQpnzRUOtaKJIf4NHDfxWWLcHNX8rUqV1iRpXPBi1lsBoSfX89iP0e/kvn+Qib7wm/RP1xTi7/Ys/6CiHP4b47u1lN76rf+Ne8iydnz87b6XOfuMj0PBllxNJgnKLxSzE9Vh5jpGk4ALqJFIfjWFd0Xn2uELV/bmUpt/hh3KvXCK0D1OAMt35aK6e9LX09MY7xy5RAb/kr6f7rAnRmMtxMyCwHrY7fnrKdAvwjD/JBBWzUXmJyKyJbPTfzwU2DHoxdDeN8vshHCZMfDPzTOecpsTSG6Chxx7CHhn41jTbLKr9aQJ0unZteUZWQir7ogqwRPJm2m3z4lwjggnopLJzF4E4+xRTMVVlaAFOSxYu+GssAdvwJnXlcE+JJEL9ptM4SecrmwxMr03yTjfzKC/RLVB6k6yhTJ5MzKcFoqLT2pJAv4eo2GeqlTSv+/tMNVD+kccAghMSin78HcT/GSICamg1UqMSDQd47qYQ0fKspmcv+XgiCNme3e9McoCmX9hbDOK2T59x4pWF/sDOk+Tp3tMTJEySyFyu3PKVh/pQWPyzoE9OtOQOKN3wDasB/edsyRy8x8Jvr27SVbHgtsJjX9wHVi+a0cHFJKmGzF4dhY8i4cvuXzkX71ISx/64lDJ5MykqvIBccnn/uZJ55C2plyG+Xj1EkYP6OkpPo/GbZMIPJy1MGM5fvthViofzSZHCiMT2EehJ129GM5J+2uzrx8C/MK5hsqoQ/gX+YqIMrg3smPygxYiIEnLV4fPAkv3BRg60UeqPDjYVw6Y7hWvJiar438otJbdYKq/FEZK8cFvEg069uXtIKby42Pt+7tUsoqLyuXxwQuPFNcXc7fnlk04TS5HaxMN5Ls3yGw+FdRExzmNy/FAsrLPA6DeHrPZPXvVgadwaaMe82S4jER0/gSk1VhRy7tyJEaFI8EgvTZ87RZxP9mlyP9kvHJjsvoNd9Z18FcDYs5nepvfiL3CAYY4yE73Uce0p2bv3ughoqCi77b7CziXFZO+WQ8pBciUmZcXP8LRdIMkQeqWYMjBURyO3nK7p9VOkGvKfOve5KnQ6TesykGFoJhkkQqRSGWQ/5r0J73jve/6IwEh5oV9YhzZBM9qSz3M14D6D0XeMBJud70nA4kJTVfA9f3V17OXy54LAqyJHeRcKfr5lEW7wY5oi+4DA80SL7E5zEwXtK6ww/oDtCAkm0WggeKJLuJVvmRr2QNG9EbolFW5H42XVk/GWu1ExALl5aw6FCJLP1XPv3Lj7J4peePZg5UdXM4Fp74UghDUTTutx2lEGYx7FeMS2iC7zYYT56ffh57L4/ZpNGLnSWuXggns8jXhkasRIIjbrunrPno2weuYHHws2Ye69kesC2szYIsBGuk6sbKk/MMo8pMOTorZ/7qYkU200859PEreB1qNZl8+1lfVmDnSXcMs84tH75/8M0mjiq8LvMbED2rXJQgsdf7jspsa8oLb33/ufsQ2kXtZxtUPOWTXIB/mU9EiHtOTybERRgwjCHo6x0WNk4oMdt0T+f3BOTpkvdVIq6dQxn5YPHD9HSi4EALPbHqH/4MS9KMGFs5LOY6f9/zCcEAgjNE4lRlQMQtZ+9jtZQAw1gpqRgU5Xua1k3+cMd3D9hd823n8tRJPAyKsOWcbu7CRdAIuY9Qxyr0BfkWnawYJpRDuWP1IDs/qRqxn0fGB/IzTonxvUpl0LfXvW72hqGmc8uHH2uMcQfjCeZs0MrHqLabENTRXbUfSjnVXgWA93ZmCRWcvRhGL/yPfh+KsNeZs0iJzyaGjjIZXvIH0CW2XzVjripasnAfhQTaDXKhbSyrVNqXCzM5c37MHp1ZR2lPEPtKWPTpeqcsyFBqNh2cKQkWYkHCoHmyNx4pxLv5RqlVL8SbkXp2HK6ZcRLHA5H2n0ZpU1VcKAgvDnJTjD5Wr4AjwUPS/JU6Trrd99P+hR/852RDubyKcDrcHDcPYol+rfLSb1EvXppLqIDC1xNsAkAevK4E5B3Hn39TBp2qx0d8gCn/kCbhkzEfcmYM4EjgqOp43ALUy9XRQ3XMjNSo3aFu8KanMI5fqPn8fAzzP1mQC4UuzKYjpaeJNnnaHuCBsSBUE7SIKnxpOb5gVaFFHPOnbZStI7lUmSKnQdJCdKmyJHbA98p2nglwBHATqpO6cbvQ46Pog7hi0gLs6EQP68l1sXwe32Wk86Lo7VFcBaYCHQqQGVtqyTjs/8CF0ztXCRhN4zlx7048R6AEYhwj0Y52rskG9H5tjqMt9ZH8Oq95aV1M+qFrQl1mtiWiTA9xm1H7TZ6wdP0UG7VB7CgSGV0RyZapJdzmB8BAW0ftaQQDdY4nVVpi00iAR4AyLa9akVY1sS4ivCy250enzooUo/Zw116csN2AnNmEdrhcY5sLKpV+Wp4w01qQKm9/I3FNhegcPnDDV8a3nd/MaXBLRHadXhUJ5IwRZRt8rFUCTiOHcnb5y62dYU5qWK0uNGc6s5w0w9/mKmxTeX7qq2i54iMaH4dsgO3yz6AbVOaWiDX5wPe/T0DZxiZMKiVUWcrnUxInZUwKPCwmfjzuGn1K4hRg7n8pp9rUbDux6geW7G0iLkqBPsVadhiZRTpNSXahe063Mzr1cjr3exr5L8LOVeZxYKYXeLdMVRHPwMhH/wszTp2aGrcY0HypErgdOck95oBZzrWtCDL0aUUSrUMjOtW0JuMu06rKyqkaZ8m31mksoQvD3cZCk/rtJoX6e6FVw9yus0u7fuVsfFgC7cplGU6YZIu/A34QqVzMMxzD31kyicIuT/FzpyQWGEqqTDqTWyuLZgezZo915uVV2/WdlWNE/a5JjemmAuZvQ11xDt7odTLVX+rynHxdAWArclY7DN2xWs2moulTc/PVdk5EWJ77ih+dd1e4NRlF0ilJDro/vAqz5ozJc1jUf6piuS5dgZb52/lZxMlp+gQmPWXfKMvA7ghJlZ6RV4ALouQK7LdEPimHkma6kzw9dZ4Laf5U/mGgScWcP/HSaEfWBvkbh2x9Q0BGlIEcJr2+IJG9+RP2pRTqZkZtGeaAQVF1iiXVIlWuVNh7RyhKZNY4U8GC88CFb7Lx0FNpEZ5cXV62nPQz8BK2eFTg5j/+PRSojy7scTFU+jxGsRIRvSsJ5VkmcX7V7BPhF6RgC2xlpb+THBXvUH9B8nQlY3hcxhc8LnND6gy7QsLYxcCfKT/cMZ+Vas02iParCaHeiuc2k5p3RsUglVz9pqaXDO2C2OU2RKl97gO4XwaogfiQJz70cMLPOW5Mf0k27uXgS+DU+5zT7wsU38uQXd+MI9/Ak5SruKF3OF56Xl66QR8sVqfyVVIKCJ+ACH2f9Hz5O743phToZJGM4vSOBpdDJDqPwMeQ5L41/V1piPwPWcl4wQ8OkUTWfl9m1BQGtBid0Zap5PK5DnkVUdsBLJv+fjLWJ6wtaB5ZKd5/9r0Hvtuh+TmrWlhE9iTaCMAFo8HHXi3kb42UbTsiYo07s1ksHleqhxHv3CvUbDlvO+Sgj/iXSemdVd9MmSKURqOPz+92pHsCTPmfcvIEFrBrjNAozgxcy+IU1SVRSZKNLMywOzMiBr2L/9+dSiwd9XnSR1yHokqnqeZqTdYspRYoDYANRgTma0EkZIMhnhqY9tUB35c07J5tsV2b/WzRZgVDZNIBvVQ6RkGFXq+n0n5fNEogBQlN+IWJJSkpK/nv8XhOHl1DBHlWYLcDXdnmBJ1+Je/9+aCaS//l8l2bjRDRKxwy45UMhfIDiasWBtkAW3c9JtCai0VGd4ZeGS13FkDMtmw58zXNU62E4n6HomR+KHZNQYOcEbkmy1oh0JmiUOFJd1Q4XaPkyMYcpcpf0o98DeAP4O19zeW/2sDjnnnF5776EfitnTg2y03Dps3k9JZ5Fm7JpSVxZF3qetnQ5wKraG1tFWWikEHuXN/Knh9yLfxnBYQiQgtUNTzpAIEY7QY+QJa1npvDH2jf34p0m+2Wo3C3RSrWvrWVPzB3SzdjmRlLx9odk3gDxwq7AsAOqKgnB3L0AJ4OqiOyU4t2YU7FxYdwgONT3V0tQKbSpbcrqZl7lwuEJXnMpaZFgS6lyJvWLummzrPnUtu5s+TjvKaBjHpDB68XSE5qlvx9jPqg/RPBYGl9V9m4CufmPyuOLMH2Mh47wZ3gS8hD0hw5mZT6H/cdnIJj9Aio8bbEQLyHIZ5LbSoYdMgQdCGuGJ1PlnSy8b29HVunTSFkWXMy4GQ3LpIcZIkZIRGQOQn4vJTPTggmFiV4kFRHbia5+cd9B7v4zE4BNcGVUJwQZIjnCUrTzzqldNfEliBB2sHBd23pSDTSKF0/tBPrR7tZouSpZGDvuqbk6qPx9cAfOTXJwFd/j8qQA5X/GOpvUN2yba+1nWTsqa2eaRNIPBb6F3vu+nHARy9ZyT9HJVqubnutWUnBXl1xKw6ofXAAr+l40eSN5/9Dl6x7/IiXlj9n3oqxDGW2bfv/axB76onlQGreJa11++h90xBh+oE06/3Hf99tiq0A1gkFlL6EJFQC6qYjcTWQwE2GgP7DeR2K+tL0JbUh49K6ppXpFeM3ukpWTChNnVxhNov+m4xHdSTS3TfkthSuRPbkgbrUMr7UYORUZJjvYBSJB2B4zZ/UAl00p7Xb3lDR4y1eNbbcPLvE1cg1FFTLOn6+NKye/ITVzvN/wxv3/EtINQsp1et2AFpRwWh5qt+iVrh9qdlosVPAVOhUQX9moyDbFOAclnA+YuNchFLsz4e3u5sCUlW+Ltue7iLut1vzUfUqY36KGmdn6zMjSq3XID316NJzweIZ1b/cWyVi/yUXt2oo52mNNWouXxF0pzdwgGC+XJ7E6N8dC5OpCTvddHABxC4H6Ruus48U3SiyrTxFW+0sNE9sTPfgAZfzxPL5rkapfHme3KnoElrV/JY/89harYdzR8KOg2DbibhVe/jMtK+Vwh1OnU/jNOw6mNfd/oHlOMWyo3it96jxw99J+XWSrrJ7mfa4bxT/SuwGluCmvB9xr6oImltj0TnqPF+LuiSim+7x6VpKS1t0/ul6p2Qp1cm1cEPF+Sy55KuJbLKJQiybseruQg/O0CuSSg65WDJZV8uSW9vnC+0lc/LsbZHS/JYWazjY7nS1l4ZtLW124N6ysLBS5bdYtKGw1lI0qrrQrA2HNB04yWjfajT21lCDWJpgPIu2oruXcwuDB5LOHVLU8YZQm2w4vSB8jBlvuDky+sE4YNtTsXjQjyePiMoHxeK+WnxcHb5PHBkInCZ7zjnFB8SRpi3g40ZTg/W0ODKp1UcnXXxP/P8v4wkMPvgR9aclzeSWBmLLjCVD8V+BfDZhzOAvYmCnMDvVqk+xFuSmbdCbcl3dXCmHS+fyIB7rDhBOROM2wg1s4pYJwJcT4hN6MuP+6YneWYQVmfgVcg5+aiZuKvADm1BwJdvKq04vzpg31ucChAlyfJ7Yelv4LNAEc4o+860rHEi6p/RpnNiDwtlwqz1Lf9BlUIvTTdwI0BDM++nn6KLfgtblk9gsdWY456otuHUfX/CSk1P0dZHdp+ZwWJlFuadsoa0HPCJFaR9PRFisyH2mN6VagTs5cbbNpQKW+NnVW/KjGwbvEPmzBVa5SReOmubHexTxBWS/6KHkqfe2zfXfoRH/h/2+6m90lYKVL8kX9cc5E+ZCcdsEsPBQg6g16VfXl4t5sPQIcJoQnOVwt2IiC5xt8YnxVApvknMquahoVps1+H8bf7XSorrUCpzjC+dFvIicmIw65tyHsRlrwiazfH5kR9zXNXTyigdUdZa9QQJYFb/M4tQ8GeHal42OjMplWZIIhTlTJ2d704KCNRIOlQnpZoq7ps6QGexKfnEuDMU/DfymEswTliz6++Kd0isI4ysGf2SYczYvy8zs1UrgmZmo2QSOxM38H5crQ3j0+keRoTi//cU9i97eUR22JeOe60dU76vV4EB13JDdPdR7VfgYYDlJOv+L82DSYVvS4aPso0nn4RWrP1EDPZ2Lly1cuPT+vNGeJS09ixcvv7RwCeCXqHervzkuMzCZc5ksO46txhuZ310pOE0Dyv9kf8LedsC9XYBu8fbCTx3nf+j+AYON4qnfY2b9sD/vvPNT4OWypP5B9WDSGhuvO6o+Sos/X6r5RANcesCw410kpyRCJuGpHzQLEQfe/e7cP465d2mpLfrn29i1FvXBGM7u5CHw+/FHhVeEzx7nKYG0QmdLdd6iIzkadwFPJhnxcFhSlZ48qUrzXJVXkMKJwzMRhCbnkzBMCDbECnK0blcXc+f+GlAV/JEnRuDJJHJXqzshsrVqXZW32VxA7gQCLLZqLTh9o5vcBYBvHJdi4qhxlxSjaZASh/zYLOJbf2AxDmYeweNstLhZP42mUmqA7q9YeSzOdyy2icP6czszVWWzR/TxT9z84R7Xp1VWLppfOzwswI0L0Fw77UuEhPYdc6LA17FFbQ3to6Ljlp314zCDtYBVsvk/HXsTXmxI0Gj3fE0JLiWRF2WTGaNgOBcob4bm7H7HQREI//9Au/CtHQ7b+UksGcf9byJ+134sOM9KKGABoBC03pW9KbzHe8QqBTgFLoHNWBox4y8dAVRAyPzQKcsgYrd1CAF67/zjSiy1jJaszzhSrABYI0kLF5UsjJZNbfujEofptQH8wM1nNuoN0y6WFkg8zhSzwarhu1UA+aoEW0wHjAQQfgalAOAjLqnfSui8Gcauk7e23CJzfS+Bhlo5v9DQpd0XJy24xOAgDKhuPxCvAeIAMEQ02lFCMQUUUiqZSIHISjEFJjQ4+EUNEZ0GAA9wSCMAcIgoTgIAlN8xF6CYAgkjXqRnAJ/9f1vCqqxd4jvRBFBMAYWSyRCIZlNMgYTKqIoqlBOwILKJkEmOuPIGLIBsImJGkSxkWSOdPMwWkmWAgr5jzgHEHpEH8ECMqBKVgT6DqjwDyP//67hWoePWgVFXeEc2ETLF1dSARSabiJiaE7CSDPFg8PbrBpY2FcuXCfLloK8c5auh+TX0ezn4b+TR0dR1ul436EbdpJt1i25lW5OE/950wTrWs4GNbGIzW9gq21ZkJl5/pSCv59ctfkvFjYr+f9IzY5QV12zMtXcf8sF0l3G+rP4Arc27vY39i/YYUeb1Umy664XxP3Byon8h0Sh1akK7BNcv2QJ+raXXuK7XuRVu2chtvc3dcNfbPLvwzGfLlfwVFmHxBennbRFkn9fB6WWOuLSD4vOmcfx893r7jdb1H374ffefr5UjlOckzoXfVhcEWHLQ3/n/PzjDqovMPIJNgyPACuiH957Rj/ULna9v6+82V1Dc4xxC+3VRa83N6bRTodM5E/GWnVbg5tw8nzMGUtt5pz70ZBdvrsj5cJ8+hka/0Pn6dlcSLweG0C90fpcj9tO0gvBnN/hQNIdZ2pMjlzBHe+x+5vekfj52jxe/79bth9GwPu7aZZZbiWtmOc+1taa5vyrJQ53Gz2Dz1HdmAbNshl7hH7dWtZnjbewG5ugiEnG21NrM8QoqFHTMdOrPrjLFSujhHGqPhZDPNyYNumIsgeoPnA+zUOvFxFYRCRD9aLr5uA/azxmylOyjglwSoSI35iBx92Rj5HSN2SqI7dEOSOIm8bGkLMw4PNStfLkd3D2L7T6nzTArtKu8p7s4dqu2iYauo/+KZnvldkpimgRbWxbm9/vPJzdz44LNkOr92cXzXjTFQc4sjZPHS/VXfT1mSpnmPjOoKC/z61FIzsN8upf8hOd2R4UJz48d1lzXqocQ+jpjGF7v/Pmk1o5TT9mQJVrMM/mlN973m6Rs0JZdSzI62Ja2tfitV94Zm+LDbnt/nQEC559DZM7/7ggYm/9x/htIOtc66n8yTV8Hvv2onw2w7mk9lrZX9nx0v6MwKEBgt5jxUWMKyXrx61x9fgNnj57w7wFCax/vP1hbBXWcSMe3gh65Z0OCiF7t7qUXoTQWv1swEoGomkTRgeoW4MHGdroOC7qkyyLRVzG+VwOllqr9jKju4Guev2k7gVufiUfVr+zHkwfrPqJ+yL6jQeSC0t3nK5M/YB3qVQthrvJDRbOfeA7/fM2vo32en0e8Li+bKFmj4r3lP98OtSAjnu9Zc09zYxOm1HdfYzymhZfkxJ9LEBqmUK39z3Iom3L45QYm//Bo53u0FdwaIqZ0EMb60A3UxMSgSM7wGave8/vR9mdL6D5ImvnBp0T5Z++59ZgWZzneXWX7p2idqOwS1yDqZtGnjWsT4VnCY7aSpFi4lCm0SfNhIF2pfGoR1Xz6sFCaUI4CJQxjisMS8w9dZJzTRZXlfMgm4iwizzyOtnF0N5/08dkRyp2WliONaFrBhwd7NOePFfzHYcHjrNQ7InnR0ZHTiqcT/tZwG8C6O7EnRyhLhtIcLU6unLGhNvPUKS+IBdF/SjmJVZ1e2TmluF8JzAmT0scjtQKB/EY2nrDJ38QpUJA0dhknPiaK5CpPApcwpOSUH7ZP0WZyhEHY/4BfnguLQdrPd7VmrzSPKgk9KbXJ4tuqbchE5Lrw8ZZnNIIdp08Lj/jAV+95VUBB4evLu18kr49ifShz9JoaFEeX2XitGdmo0CprO7EpTtp65Lw/dGQKbIbpjTQM0yzv26XNDJ8d/mue6MljE3nokzy1Rd20vPLtKjplJN6fo59YQWzPGFI3JS99P+pdnz/9/xiYexDIHpZga8FCfNbme62wBo0s4AHeidY9kxCH+UyKMFbPpPk7+0wWF5ueyRZhbjCr+dZnWAmhfx9CQ0iDlklX48lCSIXk+HXAqZq06GdSp0eOLn2MGtQxUSpgNFmTEk2MWrTqs8WxvEuvCH7v3qtBD2NUUQ/T6Q1TdmY9Wrr+HAaZMhm7Jj3qeHodX2mtaaC22FtGzTbrpBRIJ4B/dJFaNBPmCFP7967gTyecjl64qpRHKcdTbBYqvKbQMOYOFH18IrMuw3qyMFtJz1+AUEqFk6YJWvpz9TBr01TKt+P1Z7A1T+0dKnlms6A1Br9Sv3o6Dcw6PEUwv9WkSXOOylzfkR/TYO/phYL5//J+Y3qf//NmD7CjsVDYqd4PGvxoGXcajTzc4KnJLuN286LlzScJ2GOvffbzpeOXRPgL0EzvgINaHLLcT34W6I4gwUKECnPYEa2OChchUpRbooNCEqN2Jm06dfhYMgOzFDel6tKjV7c06TJkOqbPgMEw6A8HWeEiW054yJVnSL5hU0w12Sem+UWBuwoVKbZAiVLTzTTLDGXKVah027+qwicCIiQiYkWsiThK1GjRbbLZBz6MPcmOnofS3SQ/mHOg4JAYuyG/JP7OygeSx39yU6RMlTpN2nSlpM+QMZN1HnviaYKzlFpa6WWUWVbZ5aATmzXxbFiTc/Edls+ofWqreUQYtmKJY/er3yQQEKpWK0acbbb73R/+9JdvfGuDjdj4XPHMN9dCoxYZSWKS1LhutvU4STbHmhhYuee+vympKKxU53PxScFNatKSnoxkJivZyUmuJU5LtNhxZ5xw0tnkJT8FKUxRilOS0pSl/ClX67jO+kw4X4Io6doswU+8uKXY0kdQKgdP2GKg3H+Bx/0qwHOCr0C6L2iG6S7eEz4iD+Lih1TuuFl/xgC88E7bWJUmRjCMvDLO/yrlFv91SXOzJQ2MCjY5OX/bpDZf4Td709uhJegx0bmDkwulhTsD+pD7PwC8IFz3D4/vDl6NL/xasFRwIAlOGUtggOAYWTDGChklwAhkWiPTiYARlOFAFAAsAQgKZARWCAQCJRQACqwRWEGOYobmasViTdv4NsNnhnwWbLbNsbk2zxNbvdZMWPONb+Or3q1Owk9bHYseX1zqBP48y9Bt70YPFtU1Dt2PwfHi0Rk5XvPYNf7BJUuw+Y7VwhbeqUfQ3xJLxFcUo6hNSLE9ej14fkkxhewWsXDlwrXxr2iNr4hc+UL1lRsCScfjwo/g7IKAcQwOiAjzn9tqj44u8OHNtvhJb/4ZEsucd9liZA3y6/9C+vrXXlf+cWB3gPgMZuUSz9OdcXI0878XyeMsmyDlCsnwNOb3rjhdxTTyRjIWmhyebEmubK/05F7/uI66mAZHn6pd8m62ZVaVxs/WmLv+u78JN3RTWimPhZpfevFfV/2l1jShwbt2PP2V/5563N9o6i2tkSy80Z7HpbABkoZKOrsPY86zHf6mI1bLvsseWB6ubGKeVPY8yU5vnOHuwi4HHF0xViLr0PAwHHTCuRUTFS5uv8JhEeQrV7uioMRLet7hmCgXtqJq11ovs4yykw3fLAt6B4P23OXGn7sGpM/mI3XON8x1LD3qrLWX+ahIt/VFtv1ci7GxurwOzphstj4dyubVsIsMdgPQLeJTzYY8tB4P9i8nI+Nk6HvheT/1Hq79cSDru+f6y2/1krpmq/q5NZ2jv3ek7gWXhvbrx61lze3/mM+ibIrD/x574UokGdrUCA==\") format(\"woff2\"); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }\n/* Vintage palettes — Offstage's own values, frozen from Concept Leya 0.11.17 (work/palettes.py; do not edit by hand).\n   The theme is not read: the same colours and pictures live here, so the panel looks the same with or without it. */\nhtml[data-offstage-palette=\"dark\"] :is(.kulisy-panel, .kulisy-tab, .kulisy-topbtn, [data-kulisy-note]) {\n  --offstage-active-bg: rgba(147,182,202,.10);\n  --offstage-bg: var(--offstage-i-bg-vignette) 50% 50% / max(100vw, 177.78vh) auto no-repeat, var(--offstage-i-bg-tile) calc(50% - var(--offstage-bg-t) * .0753425) calc(50% - var(--offstage-bg-t) * .19863) / var(--offstage-bg-t) var(--offstage-bg-t) repeat, var(--offstage-page);\n  --offstage-bg-t: calc(max(100vw, 177.78vh) * .0760417);\n  --offstage-ctl-bg: rgba(3,8,11,.45);\n  --offstage-ctl-line: rgba(80,118,145,.38);\n  --offstage-ctl-line-hi: rgba(196,169,127,.45);\n  --offstage-field: #09141a;\n  --offstage-field-bg: rgba(2,6,9,.72);\n  --offstage-field-ink: #d7e7f1;\n  --offstage-focus-line: rgba(196,169,127,.5);\n  --offstage-gold: #c4a97f;\n  --offstage-hint: #5f7f92;\n  --offstage-i-bg-tile: url(\"data:image/webp;base64,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\");\n  --offstage-i-bg-vignette: url(\"data:image/webp;base64,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\");\n  --offstage-i-input-frame: url(\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMTMwIiB2aWV3Qm94PSIwIDAgMjAwIDEzMCI+PHBhdGggZmlsbD0iIzUwNzY5MSIgZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNIDM1LjAwLDIzLjYyIDM1LjYwLDIzLjYzIDM2LjIwLDIzLjY0IDM2LjgwLDIzLjY0IDM3LjQwLDIzLjU4IDM4LjAxLDIzLjUzIDM4LjYxLDIzLjUxIDM5LjIxLDIzLjQ4IDM5LjgxLDIzLjQyIDQwLjQxLDIzLjMwIDQxLjAxLDIzLjE0IDQxLjYxLDIyLjk5IDQyLjIxLDIyLjkwIDQyLjgxLDIyLjg2IDQzLjQyLDIyLjg1IDQ0LjAyLDIyLjg0IDQ0LjYyLDIyLjg2IDQ1LjIyLDIyLjkwIDQ1LjgyLDIyLjk2IDQ2LjQyLDIyLjk5IDQ3LjAyLDIyLjk3IDQ3LjYyLDIyLjkzIDQ4LjIzLDIyLjg5IDQ4LjgzLDIyLjg0IDQ5LjQzLDIyLjc4IDUwLjAzLDIyLjcxIDUwLjYzLDIyLjY0IDUxLjIzLDIyLjYyIDUxLjgzLDIyLjY3IDUyLjQzLDIyLjgwIDUzLjAzLDIyLjk4IDUzLjY0LDIzLjE2IDU0LjI0LDIzLjI5IDU0Ljg0LDIzLjMyIDU1LjQ0LDIzLjI2IDU2LjA0LDIzLjE5IDU2LjY0LDIzLjE0IDU3LjI0LDIzLjE1IDU3Ljg0LDIzLjE2IDU4LjQ0LDIzLjEyIDU5LjA1LDIzLjAwIDU5LjY1LDIyLjg3IDYwLjI1LDIyLjc0IDYwLjg1LDIyLjYzIDYxLjQ1LDIyLjU1IDYyLjA1LDIyLjUxIDYyLjY1LDIyLjUyIDYzLjI1LDIyLjU2IDYzLjg2LDIyLjY0IDY0LjQ2LDIyLjc1IDY1LjA2LDIyLjg2IDY1LjY2LDIyLjk1IDY2LjI2LDIyLjk5IDY2Ljg2LDIyLjk3IDY3LjQ2LDIyLjkzIDY4LjA2LDIyLjkxIDY4LjY2LDIyLjkxIDY5LjI3LDIyLjk2IDY5Ljg3LDIzLjAzIDcwLjQ3LDIzLjA5IDcxLjA3LDIzLjEwIDcxLjY3LDIzLjA3IDcyLjI3LDIzLjAyIDcyLjg3LDIzLjAyIDczLjQ3LDIzLjA2IDc0LjA3LDIzLjEyIDc0LjY4LDIzLjE4IDc1LjI4LDIzLjIyIDc1Ljg4LDIzLjIzIDc2LjQ4LDIzLjE5IDc3LjA4LDIzLjEzIDc3LjY4LDIzLjA5IDc4LjI4LDIzLjA5IDc4Ljg4LDIzLjEwIDc5LjQ4LDIzLjEwIDgwLjA5LDIzLjEwIDgwLjY5LDIzLjExIDgxLjI5LDIzLjE0IDgxLjg5LDIzLjE3IDgyLjQ5LDIzLjE5IDgzLjA5LDIzLjE2IDgzLjY5LDIzLjEwIDg0LjI5LDIzLjAyIDg0LjkwLDIyLjk2IDg1LjUwLDIyLjk0IDg2LjEwLDIyLjkzIDg2LjcwLDIyLjkzIDg3LjMwLDIyLjkxIDg3LjkwLDIyLjg4IDg4LjUwLDIyLjg0IDg5LjEwLDIyLjc4IDg5LjcwLDIyLjcyIDkwLjMxLDIyLjY4IDkwLjkxLDIyLjY2IDkxLjUxLDIyLjY0IDkyLjExLDIyLjYyIDkyLjcxLDIyLjYwIDkzLjMxLDIyLjYyIDkzLjkxLDIyLjY1IDk0LjUxLDIyLjY3IDk1LjExLDIyLjcwIDk1LjcyLDIyLjc2IDk2LjMyLDIyLjgxIDk2LjkyLDIyLjg0IDk3LjUyLDIyLjc5IDk4LjEyLDIyLjY4IDk4LjcyLDIyLjU3IDk5LjMyLDIyLjU1IDk5LjkyLDIyLjY1IDEwMC41MywyMi44MCAxMDEuMTMsMjIuOTYgMTAxLjczLDIzLjA3IDEwMi4zMywyMy4xOCAxMDIuOTMsMjMuMjggMTAzLjUzLDIzLjM1IDEwNC4xMywyMy4zNSAxMDQuNzMsMjMuMzEgMTA1LjMzLDIzLjI1IDEwNS45NCwyMy4xNSAxMDYuNTQsMjMuMDMgMTA3LjE0LDIyLjkxIDEwNy43NCwyMi44MCAxMDguMzQsMjIuNzEgMTA4Ljk0LDIyLjY2IDEwOS41NCwyMi41NyAxMTAuMTQsMjIuNDYgMTEwLjc0LDIyLjM4IDExMS4zNSwyMi4zOSAxMTEuOTUsMjIuNDcgMTEyLjU1LDIyLjU2IDExMy4xNSwyMi42NCAxMTMuNzUsMjIuNjkgMTE0LjM1LDIyLjc3IDExNC45NSwyMi44NCAxMTUuNTUsMjIuOTAgMTE2LjE1LDIyLjkxIDExNi43NiwyMi45MSAxMTcuMzYsMjIuOTEgMTE3Ljk2LDIyLjkwIDExOC41NiwyMi44OSAxMTkuMTYsMjIuODcgMTE5Ljc2LDIyLjg1IDEyMC4zNiwyMi44NSAxMjAuOTYsMjIuODggMTIxLjU3LDIyLjkxIDEyMi4xNywyMi45NSAxMjIuNzcsMjIuOTggMTIzLjM3LDIzLjAyIDEyMy45NywyMy4wNCAxMjQuNTcsMjMuMDYgMTI1LjE3LDIzLjA3IDEyNS43NywyMy4wNyAxMjYuMzcsMjMuMDQgMTI2Ljk4LDIyLjk4IDEyNy41OCwyMi45NCAxMjguMTgsMjIuOTIgMTI4Ljc4LDIyLjkzIDEyOS4zOCwyMi45NSAxMjkuOTgsMjIuOTQgMTMwLjU4LDIyLjkyIDEzMS4xOCwyMi45MSAxMzEuNzgsMjIuOTMgMTMyLjM5LDIyLjk1IDEzMi45OSwyMi45NCAxMzMuNTksMjIuOTIgMTM0LjE5LDIyLjg5IDEzNC43OSwyMi44NyAxMzUuMzksMjIuODkgMTM1Ljk5LDIyLjkzIDEzNi41OSwyMi45NyAxMzcuMjAsMjIuOTcgMTM3LjgwLDIyLjg3IDEzOC40MCwyMi42NiAxMzkuMDAsMjIuNDcgMTM5LjYwLDIyLjQ0IDE0MC4yMCwyMi40MiAxNDAuODAsMjIuNDEgMTQxLjQwLDIyLjQzIDE0Mi4wMCwyMi40OSAxNDIuNjEsMjIuNTIgMTQzLjIxLDIyLjYzIDE0My44MSwyMi43NiAxNDQuNDEsMjIuODcgMTQ1LjAxLDIyLjkzIDE0NS42MSwyMi45OCAxNDYuMjEsMjMuMDMgMTQ2LjgxLDIzLjEwIDE0Ny40MSwyMy4xOCAxNDguMDIsMjMuMjggMTQ4LjYyLDIzLjM1IDE0OS4yMiwyMy40MCAxNDkuODIsMjMuNDAgMTUwLjQyLDIzLjM1IDE1MS4wMiwyMy4yOCAxNTEuNjIsMjMuMjMgMTUyLjIyLDIzLjE4IDE1Mi44MiwyMy4xMCAxNTMuNDMsMjMuMDMgMTU0LjAzLDIzLjAwIDE1NC42MywyMy4wMCAxNTUuMjMsMjMuMDIgMTU1LjgzLDIzLjAzIDE1Ni40MywyMy4wMiAxNTcuMDMsMjMuMDQgMTU3LjYzLDIzLjA5IDE1OC4yNCwyMy4xMiAxNTguODQsMjMuMDkgMTU5LjQ0LDIyLjk0IDE2MC4wNCwyMi43MiAxNjAuNjQsMjIuNTMgMTYxLjI0LDIyLjQzIDE2MS44NCwyMi40MyAxNjIuNDQsMjIuNDcgMTYzLjA0LDIyLjU0IDE2My42NSwyMi42MSAxNjQuMjUsMjIuNjYgMTY0LjQ5LDIyLjYxIDE2NC4yNywyMi41OSAxNjQuMjMsMjMuMTIgMTY0LjIwLDIzLjc2IDE2NC4yMiwyNC40MSAxNjQuMjksMjUuMDYgMTY0LjQyLDI1LjcwIDE2NC41NywyNi4zMyAxNjQuNzMsMjYuOTcgMTY0LjkyLDI3LjYwIDE2NS4xNCwyOC4yMiAxNjUuMzgsMjguODUgMTY1LjY0LDI5LjQ3IDE2NS45NSwzMC4wNiAxNjYuMzQsMzAuNjEgMTY2LjgyLDMxLjA4IDE2Ny4zNiwzMS40OSAxNjcuOTEsMzEuODcgMTY4LjQ1LDMyLjI1IDE2OC45NSwzMi42NiAxNjkuNDQsMzMuMDggMTY5Ljk2LDMzLjQ4IDE3MC41MSwzMy44MSAxNzEuMDksMzQuMTAgMTcxLjY4LDM0LjM3IDE3Mi4yNiwzNC42MyAxNzIuODUsMzQuODkgMTczLjQ1LDM1LjExIDE3NC4wNywzNS4yOCAxNzQuNjksMzUuNDQgMTc1LjMxLDM1LjU5IDE3NS45NSwzNS42OSAxNzYuNTgsMzUuNzcgMTc3LjIxLDM1LjkwIDE3Ny4yOSwzNS44NyAxNzYuODEsMzUuNjIgMTc2LjY1LDM2LjA3IDE3Ni40OSwzNi42NyAxNzYuMzIsMzcuMjcgMTc2LjE0LDM3Ljg3IDE3Ni4wMCwzOC40NyAxNzUuOTYsMzkuMDcgMTc2LjAyLDM5LjY4IDE3Ni4wOCw0MC4yOCAxNzYuMTcsNDAuODggMTc2LjMxLDQxLjQ4IDE3Ni41Miw0Mi4wOCAxNzYuNzgsNDIuNjggMTc3LjAwLDQzLjI4IDE3Ny4xMiw0My44OCAxNzcuMTcsNDQuNDggMTc3LjI2LDQ1LjA5IDE3Ny4zNyw0NS42OSAxNzcuNDYsNDYuMjkgMTc3LjUxLDQ2Ljg5IDE3Ny41Myw0Ny40OSAxNzcuNTQsNDguMDkgMTc3LjU1LDQ4LjY5IDE3Ny41Niw0OS4yOSAxNzcuNTYsNDkuOTAgMTc3LjUzLDUwLjUwIDE3Ny40OCw1MS4xMCAxNzcuNDEsNTEuNzAgMTc3LjM1LDUyLjMwIDE3Ny4zMCw1Mi45MCAxNzcuMjUsNTMuNTAgMTc3LjIyLDU0LjEwIDE3Ny4yMyw1NC43MCAxNzcuMjEsNTUuMzEgMTc3LjE0LDU1LjkxIDE3Ni45OSw1Ni41MSAxNzYuODAsNTcuMTEgMTc2LjYwLDU3LjcxIDE3Ni40OCw1OC4zMSAxNzYuMzksNTguOTEgMTc2LjMyLDU5LjUxIDE3Ni4yOSw2MC4xMSAxNzYuMzAsNjAuNzIgMTc2LjM0LDYxLjMyIDE3Ni4zOSw2MS45MiAxNzYuNDQsNjIuNTIgMTc2LjQ4LDYzLjEyIDE3Ni41Miw2My43MiAxNzYuNTYsNjQuMzIgMTc2LjU5LDY0LjkyIDE3Ni42NCw2NS41MyAxNzYuNzQsNjYuMTMgMTc2LjkxLDY2LjczIDE3Ny4xMCw2Ny4zMyAxNzcuMjgsNjcuOTMgMTc3LjQzLDY4LjUzIDE3Ny41Niw2OS4xMyAxNzcuNjUsNjkuNzMgMTc3LjY4LDcwLjMzIDE3Ny42NSw3MC45NCAxNzcuNTgsNzEuNTQgMTc3LjQ5LDcyLjE0IDE3Ny40MSw3Mi43NCAxNzcuMzUsNzMuMzQgMTc3LjMxLDczLjk0IDE3Ny4yOCw3NC41NCAxNzcuMjQsNzUuMTQgMTc3LjE5LDc1Ljc0IDE3Ny4xNiw3Ni4zNSAxNzcuMTMsNzYuOTUgMTc3LjExLDc3LjU1IDE3Ny4xMiw3OC4xNSAxNzcuMTQsNzguNzUgMTc3LjE1LDc5LjM1IDE3Ny4xMyw3OS45NSAxNzcuMDYsODAuNTUgMTc2Ljk3LDgxLjE1IDE3Ni45MSw4MS43NiAxNzYuOTIsODIuMzYgMTc3LjAwLDgyLjk2IDE3Ny4xMCw4My41NiAxNzcuMTYsODQuMTYgMTc3LjEzLDg0Ljc2IDE3Ny4wMyw4NS4zNiAxNzYuOTAsODUuOTYgMTc2Ljc3LDg2LjU3IDE3Ni43MSw4Ny4xNyAxNzYuNjgsODcuNzcgMTc2LjY3LDg4LjM3IDE3Ni42Nyw4OC45NyAxNzYuNzAsODkuNTcgMTc2Ljc2LDkwLjE3IDE3Ni44MCw5MC43NyAxNzYuODIsOTEuMzcgMTc2LjgxLDkxLjk4IDE3Ni43OCw5Mi41OCAxNzYuNzIsOTMuMTggMTc2LjYzLDkzLjc4IDE3Ni41NSw5NC4zOCAxNzYuOTAsOTMuOTcgMTc3LjMzLDkzLjUxIDE3Ni42OCw5My41NSAxNzYuMDIsOTMuNjQgMTc1LjM3LDkzLjgxIDE3NC43Myw5NC4wMyAxNzQuMTEsOTQuMjggMTczLjUxLDk0LjU2IDE3Mi45Miw5NC44NiAxNzIuMzQsOTUuMTYgMTcxLjc3LDk1LjQ2IDE3MS4yMCw5NS43NiAxNzAuNjIsOTYuMDYgMTcwLjA0LDk2LjM1IDE2OS40NSw5Ni42NiAxNjguODcsOTYuOTkgMTY4LjMyLDk3LjM3IDE2Ny43OSw5Ny43NyAxNjcuMjcsOTguMjEgMTY2Ljc3LDk4LjY2IDE2Ni4yOSw5OS4xNSAxNjUuODcsOTkuNjggMTY1LjUwLDEwMC4yNSAxNjUuMTksMTAwLjg1IDE2NC45MiwxMDEuNDggMTY0LjY5LDEwMi4xMSAxNjQuNDksMTAyLjc2IDE2NC4zMiwxMDMuNDEgMTY0LjE5LDEwNC4wNyAxNjQuMDksMTA0LjcyIDE2NC4wMCwxMDUuMzggMTYzLjg3LDEwNi4wMyAxNjMuNzEsMTA2LjY3IDE2My41NSwxMDcuMzMgMTYzLjkwLDEwNi44NyAxNjQuNDAsMTA2LjM1IDE2My44MCwxMDYuMzIgMTYzLjIwLDEwNi4zMSAxNjIuNjAsMTA2LjI5IDE2MS45OSwxMDYuMjcgMTYxLjM5LDEwNi4yNCAxNjAuNzksMTA2LjIzIDE2MC4xOSwxMDYuMjQgMTU5LjU5LDEwNi4yNSAxNTguOTksMTA2LjIzIDE1OC4zOSwxMDYuMjEgMTU3Ljc5LDEwNi4yMSAxNTcuMTksMTA2LjIyIDE1Ni41OCwxMDYuMjIgMTU1Ljk4LDEwNi4yOCAxNTUuMzgsMTA2LjM4IDE1NC43OCwxMDYuNTYgMTU0LjE4LDEwNi43OCAxNTMuNTgsMTA2Ljk5IDE1Mi45OCwxMDcuMTQgMTUyLjM4LDEwNy4yMiAxNTEuNzcsMTA3LjI0IDE1MS4xNywxMDcuMjIgMTUwLjU3LDEwNy4yMiAxNDkuOTcsMTA3LjIzIDE0OS4zNywxMDcuMjMgMTQ4Ljc3LDEwNy4yMyAxNDguMTcsMTA3LjE5IDE0Ny41NywxMDcuMDkgMTQ2Ljk3LDEwNi45NSAxNDYuMzYsMTA2Ljg1IDE0NS43NiwxMDYuODAgMTQ1LjE2LDEwNi43NyAxNDQuNTYsMTA2LjczIDE0My45NiwxMDYuNjcgMTQzLjM2LDEwNi42MCAxNDIuNzYsMTA2LjU0IDE0Mi4xNiwxMDYuNDkgMTQxLjU2LDEwNi40NyAxNDAuOTUsMTA2LjQ3IDE0MC4zNSwxMDYuNTQgMTM5Ljc1LDEwNi42NyAxMzkuMTUsMTA2LjgwIDEzOC41NSwxMDYuODkgMTM3Ljk1LDEwNi45NyAxMzcuMzUsMTA3LjAzIDEzNi43NSwxMDcuMDYgMTM2LjE0LDEwNy4wNCAxMzUuNTQsMTA2Ljk2IDEzNC45NCwxMDYuODUgMTM0LjM0LDEwNi43NCAxMzMuNzQsMTA2LjY1IDEzMy4xNCwxMDYuNTkgMTMyLjU0LDEwNi41NSAxMzEuOTQsMTA2LjUyIDEzMS4zNCwxMDYuNDkgMTMwLjczLDEwNi40OSAxMzAuMTMsMTA2LjUxIDEyOS41MywxMDYuNTIgMTI4LjkzLDEwNi41MSAxMjguMzMsMTA2LjQ2IDEyNy43MywxMDYuNDEgMTI3LjEzLDEwNi4zNyAxMjYuNTMsMTA2LjM4IDEyNS45MywxMDYuNDUgMTI1LjMyLDEwNi41NCAxMjQuNzIsMTA2LjYyIDEyNC4xMiwxMDYuNjggMTIzLjUyLDEwNi43OSAxMjIuOTIsMTA2LjkyIDEyMi4zMiwxMDcuMDcgMTIxLjcyLDEwNy4xOSAxMjEuMTIsMTA3LjI4IDEyMC41MiwxMDcuMzQgMTE5LjkxLDEwNy40MCAxMTkuMzEsMTA3LjQ1IDExOC43MSwxMDcuNTEgMTE4LjExLDEwNy41NiAxMTcuNTEsMTA3LjU5IDExNi45MSwxMDcuNTkgMTE2LjMxLDEwNy41NiAxMTUuNzEsMTA3LjUxIDExNS4xMCwxMDcuNDggMTE0LjUwLDEwNy40OCAxMTMuOTAsMTA3LjUyIDExMy4zMCwxMDcuNTYgMTEyLjcwLDEwNy42MCAxMTIuMTAsMTA3LjYwIDExMS41MCwxMDcuNTkgMTEwLjkwLDEwNy41OCAxMTAuMzAsMTA3LjU4IDEwOS42OSwxMDcuNjIgMTA5LjA5LDEwNy42OSAxMDguNDksMTA3Ljc0IDEwNy44OSwxMDcuNzAgMTA3LjI5LDEwNy41NSAxMDYuNjksMTA3LjI5IDEwNi4wOSwxMDcuMDIgMTA1LjQ5LDEwNi44MyAxMDQuODksMTA2LjczIDEwNC4yOCwxMDYuNjggMTAzLjY4LDEwNi42NyAxMDMuMDgsMTA2LjY0IDEwMi40OCwxMDYuNjQgMTAxLjg4LDEwNi42NyAxMDEuMjgsMTA2LjcyIDEwMC42OCwxMDYuNzQgMTAwLjA4LDEwNi43MSA5OS40NywxMDYuNjcgOTguODcsMTA2LjYzIDk4LjI3LDEwNi42MiA5Ny42NywxMDYuNTkgOTcuMDcsMTA2LjU0IDk2LjQ3LDEwNi40OCA5NS44NywxMDYuNDUgOTUuMjcsMTA2LjQ1IDk0LjY3LDEwNi40NiA5NC4wNiwxMDYuNDkgOTMuNDYsMTA2LjU0IDkyLjg2LDEwNi42MiA5Mi4yNiwxMDYuNzIgOTEuNjYsMTA2LjgyIDkxLjA2LDEwNi44OCA5MC40NiwxMDYuOTEgODkuODYsMTA2LjkwIDg5LjI2LDEwNi44OCA4OC42NSwxMDYuODYgODguMDUsMTA2LjgyIDg3LjQ1LDEwNi43NiA4Ni44NSwxMDYuNjkgODYuMjUsMTA2LjYzIDg1LjY1LDEwNi42MiA4NS4wNSwxMDYuNjUgODQuNDUsMTA2LjY3IDgzLjg1LDEwNi42NCA4My4yNCwxMDYuNjEgODIuNjQsMTA2LjYxIDgyLjA0LDEwNi42NCA4MS40NCwxMDYuNjggODAuODQsMTA2LjcxIDgwLjI0LDEwNi43NSA3OS42NCwxMDYuODEgNzkuMDQsMTA2Ljg4IDc4LjQzLDEwNi45MiA3Ny44MywxMDYuOTIgNzcuMjMsMTA2LjkzIDc2LjYzLDEwNi45NSA3Ni4wMywxMDYuOTUgNzUuNDMsMTA2LjkzIDc0LjgzLDEwNi44OSA3NC4yMywxMDYuODcgNzMuNjMsMTA2Ljg3IDczLjAyLDEwNi44OCA3Mi40MiwxMDYuODcgNzEuODIsMTA2LjgzIDcxLjIyLDEwNi43NSA3MC42MiwxMDYuNjYgNzAuMDIsMTA2LjYxIDY5LjQyLDEwNi42MCA2OC44MiwxMDYuNjEgNjguMjIsMTA2LjYzIDY3LjYxLDEwNi42NCA2Ny4wMSwxMDYuNjQgNjYuNDEsMTA2LjY3IDY1LjgxLDEwNi43NCA2NS4yMSwxMDYuNzkgNjQuNjEsMTA2LjgzIDY0LjAxLDEwNi44OCA2My40MSwxMDYuOTMgNjIuODAsMTA2Ljk2IDYyLjIwLDEwNi45NSA2MS42MCwxMDYuOTMgNjEuMDAsMTA2Ljg4IDYwLjQwLDEwNi43OSA1OS44MCwxMDYuNjcgNTkuMjAsMTA2LjUyIDU4LjYwLDEwNi4zNiA1OC4wMCwxMDYuMjQgNTcuMzksMTA2LjEzIDU2Ljc5LDEwNi4wMiA1Ni4xOSwxMDUuOTUgNTUuNTksMTA1Ljk0IDU0Ljk5LDEwNS45NyA1NC4zOSwxMDYuMDMgNTMuNzksMTA2LjA5IDUzLjE5LDEwNi4xMyA1Mi41OSwxMDYuMjAgNTEuOTgsMTA2LjMyIDUxLjM4LDEwNi40NCA1MC43OCwxMDYuNTAgNTAuMTgsMTA2LjQ4IDQ5LjU4LDEwNi40NCA0OC45OCwxMDYuMzkgNDguMzgsMTA2LjMzIDQ3Ljc4LDEwNi4yNCA0Ny4xOCwxMDYuMTAgNDYuNTcsMTA1Ljk5IDQ1Ljk3LDEwNS45NCA0NS4zNywxMDUuOTcgNDQuNzcsMTA2LjA2IDQ0LjE3LDEwNi4xOSA0My41NywxMDYuMzIgNDIuOTcsMTA2LjQ4IDQyLjM3LDEwNi42NyA0MS43NiwxMDYuODMgNDEuMTYsMTA2LjkzIDQwLjU2LDEwNi45NCAzOS45NiwxMDYuODcgMzkuMzYsMTA2LjgyIDM4Ljc2LDEwNi44MiAzOC4xNiwxMDYuODIgMzcuNTYsMTA2LjgyIDM2Ljk2LDEwNi44MSAzNi4zNSwxMDYuODMgMzUuNzUsMTA2Ljg2IDM1LjcxLDEwNy4wNSAzNi4wNSwxMDcuMzYgMzYuMDAsMTA2Ljg3IDM1Ljg4LDEwNi4yMyAzNS43MSwxMDUuNjAgMzUuNTEsMTA0Ljk5IDM1LjMxLDEwNC4zOCAzNS4xMiwxMDMuNzcgMzQuOTQsMTAzLjE2IDM0LjcyLDEwMi41NSAzNC40NCwxMDEuOTggMzQuMDQsMTAxLjQ3IDMzLjU3LDEwMS4wMiAzMy4wOCwxMDAuNTkgMzIuNjEsMTAwLjE3IDMyLjE0LDk5Ljc3IDMxLjY2LDk5LjM5IDMxLjIwLDk5LjAwIDMwLjc2LDk4LjYwIDMwLjMzLDk4LjE5IDI5LjkwLDk3Ljc3IDI5LjQ3LDk3LjM0IDI5LjA1LDk2Ljg5IDI4LjY0LDk2LjM4IDI4LjIxLDk1Ljg2IDI3LjcyLDk1LjQwIDI3LjE2LDk1LjA4IDI2LjU3LDk0LjgzIDI1Ljk3LDk0LjU5IDI1LjM2LDk0LjM2IDI0Ljc0LDk0LjE1IDI0LjEwLDk0LjAzIDIzLjQ1LDkzLjk1IDIyLjgwLDkzLjg3IDIyLjgyLDkzLjk3IDIzLjMzLDk0LjM3IDIzLjQxLDkzLjkzIDIzLjQ0LDkzLjMzIDIzLjQzLDkyLjczIDIzLjQxLDkyLjEzIDIzLjM3LDkxLjUzIDIzLjMzLDkwLjkzIDIzLjMwLDkwLjMyIDIzLjI5LDg5LjcyIDIzLjMwLDg5LjEyIDIzLjMxLDg4LjUyIDIzLjI3LDg3LjkyIDIzLjIyLDg3LjMyIDIzLjE1LDg2LjcyIDIzLjA3LDg2LjEyIDIyLjk4LDg1LjUyIDIyLjg5LDg0LjkxIDIyLjgxLDg0LjMxIDIyLjc3LDgzLjcxIDIyLjc4LDgzLjExIDIyLjgyLDgyLjUxIDIyLjkxLDgxLjkxIDIzLjA0LDgxLjMxIDIzLjIwLDgwLjcxIDIzLjMzLDgwLjEwIDIzLjQ0LDc5LjUwIDIzLjUxLDc4LjkwIDIzLjUzLDc4LjMwIDIzLjQ3LDc3LjcwIDIzLjQwLDc3LjEwIDIzLjMxLDc2LjUwIDIzLjIwLDc1LjkwIDIzLjA1LDc1LjMwIDIyLjkwLDc0LjY5IDIyLjgwLDc0LjA5IDIyLjgwLDczLjQ5IDIyLjg4LDcyLjg5IDIyLjk5LDcyLjI5IDIzLjA0LDcxLjY5IDIzLjAxLDcxLjA5IDIyLjk2LDcwLjQ5IDIyLjkwLDY5Ljg5IDIyLjg1LDY5LjI4IDIyLjgyLDY4LjY4IDIyLjgxLDY4LjA4IDIyLjc5LDY3LjQ4IDIyLjc1LDY2Ljg4IDIyLjcwLDY2LjI4IDIyLjY1LDY1LjY4IDIyLjYxLDY1LjA4IDIyLjU4LDY0LjQ3IDIyLjU1LDYzLjg3IDIyLjUyLDYzLjI3IDIyLjQ5LDYyLjY3IDIyLjQ5LDYyLjA3IDIyLjUzLDYxLjQ3IDIyLjU5LDYwLjg3IDIyLjY1LDYwLjI3IDIyLjY5LDU5LjY3IDIyLjc2LDU5LjA2IDIyLjgzLDU4LjQ2IDIyLjkwLDU3Ljg2IDIyLjkzLDU3LjI2IDIyLjk0LDU2LjY2IDIyLjk1LDU2LjA2IDIyLjk2LDU1LjQ2IDIzLjAwLDU0Ljg2IDIzLjAxLDU0LjI2IDIzLjAxLDUzLjY1IDIzLjAyLDUzLjA1IDIzLjA2LDUyLjQ1IDIzLjEwLDUxLjg1IDIzLjEyLDUxLjI1IDIzLjA5LDUwLjY1IDIzLjA0LDUwLjA1IDIyLjk5LDQ5LjQ1IDIyLjk2LDQ4Ljg1IDIyLjkxLDQ4LjI0IDIyLjgzLDQ3LjY0IDIyLjc2LDQ3LjA0IDIyLjcxLDQ2LjQ0IDIyLjcxLDQ1Ljg0IDIyLjc1LDQ1LjI0IDIyLjgwLDQ0LjY0IDIyLjg3LDQ0LjA0IDIyLjk0LDQzLjQzIDIzLjAwLDQyLjgzIDIzLjA0LDQyLjIzIDIzLjA1LDQxLjYzIDIzLjA0LDQxLjAzIDIzLjA0LDQwLjQzIDIzLjA2LDM5LjgzIDIzLjA4LDM5LjIzIDIzLjA5LDM4LjYzIDIzLjA2LDM4LjAyIDIyLjk5LDM3LjQyIDIyLjkxLDM2LjgyIDIyLjg0LDM2LjIyIDIyLjgyLDM1LjYyIDIyLjY1LDM1LjYyIDIyLjY0LDM1Ljk5IDIzLjI4LDM2LjA1IDIzLjkzLDM2LjAwIDI0LjU3LDM1LjgzIDI1LjE4LDM1LjYxIDI1LjgwLDM1LjQxIDI2LjQyLDM1LjI0IDI3LjAzLDM1LjAzIDI3LjYyLDM0Ljc3IDI4LjE5LDM0LjQ2IDI4Ljc1LDM0LjE1IDI5LjMzLDMzLjg2IDI5LjkwLDMzLjU2IDMwLjQ1LDMzLjIxIDMwLjk0LDMyLjc5IDMxLjQwLDMyLjMzIDMxLjg2LDMxLjg3IDMyLjM1LDMxLjQ1IDMyLjg3LDMxLjA0IDMzLjM2LDMwLjU5IDMzLjg0LDMwLjEyIDM0LjMyLDI5LjYzIDM0LjgwLDI5LjE0IDM1LjI4LDI4LjYyIDM1LjcxLDI4LjA2IDM2LjA1LDI3LjQ1IDM2LjI4LDI2Ljc5IDM2LjQwLDI2LjEwIDM2LjQ3LDI1LjQxIDM2LjU2LDI0LjcyIDM2LjcyLDI0LjA1IDM2LjkxLDIzLjM4IDM2Ljk0LDIyLjY5IDM2Ljk0LDIyLjA0IFogTSAzMy40MiwyMS45NiAzMy40MiwyMi41MyAzMy40MywyMy4wNiAzMy41NiwyMy42MSAzMy42MiwyNC4xNyAzMy41NiwyNC43MiAzMy40MSwyNS4yNSAzMy4yNCwyNS43NyAzMy4xMCwyNi4zMCAzMi45NywyNi44NSAzMi44MCwyNy4zOCAzMi41NSwyNy44OCAzMi4yMSwyOC4zMyAzMS44MSwyOC43MiAzMS4zNiwyOS4wNyAzMC45MSwyOS40MSAzMC41MCwyOS43NiAzMC4wOSwzMC4xMCAyOS42OSwzMC40NCAyOS4zMSwzMC44MSAyOC45NiwzMS4yNCAyOC42NiwzMS43NCAyOC4zNSwzMi4yNyAyNy45OSwzMi43OSAyNy41NywzMy4yMSAyNy4wOSwzMy41NiAyNi41OCwzMy44NSAyNi4wMywzNC4wNiAyNS40NSwzNC4xOSAyNC44NSwzNC4xOCAyNC4yNCwzNC4wNiAyMy42NSwzMy45MyAyMy4wOCwzMy44NSAyMi41MSwzMy44NCAyMS4xNiwzNC4yNSAyMC44OCwzNS42MiAyMC44NSwzNi4yMiAyMC44MCwzNi44MiAyMC43NCwzNy40MiAyMC43MCwzOC4wMiAyMC43MCwzOC42MyAyMC43MywzOS4yMyAyMC43OCwzOS44MyAyMC44Miw0MC40MyAyMC44Miw0MS4wMyAyMC43OSw0MS42MyAyMC43Miw0Mi4yMyAyMC42NCw0Mi44MyAyMC41NSw0My40MyAyMC40Nyw0NC4wNCAyMC4zOSw0NC42NCAyMC4zMyw0NS4yNCAyMC4yOCw0NS44NCAyMC4yNSw0Ni40NCAyMC4yNSw0Ny4wNCAyMC4zMSw0Ny42NCAyMC40MSw0OC4yNCAyMC41OCw0OC44NSAyMC43Nyw0OS40NSAyMC45NCw1MC4wNSAyMS4wNSw1MC42NSAyMS4xNCw1MS4yNSAyMS4xOSw1MS44NSAyMS4yMSw1Mi40NSAyMS4yMSw1My4wNSAyMS4xNiw1My42NSAyMS4xMCw1NC4yNiAyMS4wNiw1NC44NiAyMS4wMyw1NS40NiAyMS4wMCw1Ni4wNiAyMC45OCw1Ni42NiAyMC45OSw1Ny4yNiAyMS4wMSw1Ny44NiAyMS4wNSw1OC40NiAyMS4xMCw1OS4wNiAyMS4xNCw1OS42NyAyMS4xNiw2MC4yNyAyMS4xOSw2MC44NyAyMS4yMiw2MS40NyAyMS4yNSw2Mi4wNyAyMS4yNSw2Mi42NyAyMS4yMyw2My4yNyAyMS4yMCw2My44NyAyMS4xNyw2NC40NyAyMS4xNiw2NS4wOCAyMS4xMiw2NS42OCAyMS4wOCw2Ni4yOCAyMS4wMyw2Ni44OCAyMC45OSw2Ny40OCAyMC45Nyw2OC4wOCAyMC45NSw2OC42OCAyMC45MSw2OS4yOCAyMC44Myw2OS44OSAyMC43NSw3MC40OSAyMC42Nyw3MS4wOSAyMC42Miw3MS42OSAyMC42Niw3Mi4yOSAyMC43Niw3Mi44OSAyMC44Nyw3My40OSAyMC45Myw3NC4wOSAyMC45Myw3NC42OSAyMC44OSw3NS4zMCAyMC44Niw3NS45MCAyMC44Nyw3Ni41MCAyMC44OCw3Ny4xMCAyMC44Nyw3Ny43MCAyMC44NCw3OC4zMCAyMC43Nyw3OC45MCAyMC42NSw3OS41MCAyMC40OSw4MC4xMCAyMC4zMiw4MC43MSAyMC4xNSw4MS4zMSAxOS45OCw4MS45MSAxOS44Miw4Mi41MSAxOS43MSw4My4xMSAxOS42OCw4My43MSAxOS42OSw4NC4zMSAxOS43Miw4NC45MSAxOS43Nyw4NS41MiAxOS44NSw4Ni4xMiAxOS45NSw4Ni43MiAyMC4wNCw4Ny4zMiAyMC4xMSw4Ny45MiAyMC4xNSw4OC41MiAyMC4xNyw4OS4xMiAyMC4yMyw4OS43MiAyMC4zMiw5MC4zMiAyMC40MSw5MC45MyAyMC41MSw5MS41MyAyMC42MSw5Mi4xMyAyMC43MSw5Mi43MyAyMC44MCw5My4zMyAyMC44OCw5My45MyAyMC45NSw5NC42NiAyMS41Niw5NS44NyAyMi42Nyw5Ni4xMSAyMy4yMSw5Ni4yOSAyMy43Miw5Ni41MyAyNC4yMiw5Ni43OSAyNC43MSw5Ni45OSAyNS4yMCw5Ny4xOCAyNS43MCw5Ny4zNSAyNi4xOCw5Ny41NCAyNi42NCw5Ny43OCAyNy4xMSw5OC4wMSAyNy41Nyw5OC4yNSAyOC4wMCw5OC41NCAyOC4zNiw5OC45MiAyOC43MSw5OS4zMiAyOS4wNCw5OS43MCAyOS4zOSwxMDAuMDcgMjkuNzYsMTAwLjQwIDMwLjE1LDEwMC43MyAzMC41NCwxMDEuMDYgMzAuOTQsMTAxLjQwIDMxLjMyLDEwMS43NyAzMS42NCwxMDIuMTggMzEuOTAsMTAyLjYzIDMyLjE1LDEwMy4wOSAzMi4zOCwxMDMuNTYgMzIuNjIsMTA0LjAyIDMyLjg3LDEwNC41MCAzMy4wOCwxMDQuOTggMzMuMjQsMTA1LjQ5IDMzLjM2LDEwNi4wMSAzMy40NSwxMDYuNTQgMzMuNTIsMTA3LjA3IDMzLjU4LDEwNy44MSAzNC40MSwxMDkuMjUgMzUuNzUsMTA5LjQ3IDM2LjM1LDEwOS40OCAzNi45NiwxMDkuNDUgMzcuNTYsMTA5LjQxIDM4LjE2LDEwOS4zNiAzOC43NiwxMDkuMzIgMzkuMzYsMTA5LjI5IDM5Ljk2LDEwOS4yMSA0MC41NiwxMDkuMTQgNDEuMTYsMTA5LjA1IDQxLjc2LDEwOC45OCA0Mi4zNywxMDguOTMgNDIuOTcsMTA4Ljg3IDQzLjU3LDEwOC43OSA0NC4xNywxMDguNzEgNDQuNzcsMTA4LjY3IDQ1LjM3LDEwOC42OCA0NS45NywxMDguNzEgNDYuNTcsMTA4LjcyIDQ3LjE4LDEwOC43MCA0Ny43OCwxMDguNjkgNDguMzgsMTA4LjcyIDQ4Ljk4LDEwOC43OSA0OS41OCwxMDguODUgNTAuMTgsMTA4Ljg5IDUwLjc4LDEwOC45MSA1MS4zOCwxMDguOTcgNTEuOTgsMTA5LjA4IDUyLjU5LDEwOS4xOCA1My4xOSwxMDkuMjMgNTMuNzksMTA5LjI2IDU0LjM5LDEwOS4yOSA1NC45OSwxMDkuMzMgNTUuNTksMTA5LjM1IDU2LjE5LDEwOS4zNCA1Ni43OSwxMDkuMzEgNTcuMzksMTA5LjMzIDU4LjAwLDEwOS40MCA1OC42MCwxMDkuNDggNTkuMjAsMTA5LjU0IDU5LjgwLDEwOS42MCA2MC40MCwxMDkuNjUgNjEuMDAsMTA5LjY3IDYxLjYwLDEwOS42NiA2Mi4yMCwxMDkuNjEgNjIuODAsMTA5LjU1IDYzLjQxLDEwOS41MSA2NC4wMSwxMDkuNDcgNjQuNjEsMTA5LjQzIDY1LjIxLDEwOS4zOSA2NS44MSwxMDkuMzggNjYuNDEsMTA5LjQwIDY3LjAxLDEwOS40MiA2Ny42MSwxMDkuMzkgNjguMjIsMTA5LjM0IDY4LjgyLDEwOS4yOCA2OS40MiwxMDkuMjEgNzAuMDIsMTA5LjEyIDcwLjYyLDEwOC45OSA3MS4yMiwxMDguODQgNzEuODIsMTA4LjczIDcyLjQyLDEwOC42OCA3My4wMiwxMDguNzEgNzMuNjMsMTA4Ljc4IDc0LjIzLDEwOC44NiA3NC44MywxMDguOTEgNzUuNDMsMTA4Ljk2IDc2LjAzLDEwOS4wMSA3Ni42MywxMDkuMDYgNzcuMjMsMTA5LjEyIDc3LjgzLDEwOS4xMiA3OC40MywxMDkuMTAgNzkuMDQsMTA5LjA4IDc5LjY0LDEwOS4xMCA4MC4yNCwxMDkuMDkgODAuODQsMTA5LjA2IDgxLjQ0LDEwOS4wNCA4Mi4wNCwxMDkuMDQgODIuNjQsMTA5LjA0IDgzLjI0LDEwOS4wNSA4My44NSwxMDkuMDUgODQuNDUsMTA5LjA1IDg1LjA1LDEwOS4xMSA4NS42NSwxMDkuMTkgODYuMjUsMTA5LjIzIDg2Ljg1LDEwOS4yMCA4Ny40NSwxMDkuMTYgODguMDUsMTA5LjExIDg4LjY1LDEwOS4wNSA4OS4yNiwxMDguOTkgODkuODYsMTA4LjkwIDkwLjQ2LDEwOC44MiA5MS4wNiwxMDguNzUgOTEuNjYsMTA4Ljc0IDkyLjI2LDEwOC43NyA5Mi44NiwxMDguODQgOTMuNDYsMTA4LjkxIDk0LjA2LDEwOC45OSA5NC42NywxMDkuMTIgOTUuMjcsMTA5LjI2IDk1Ljg3LDEwOS40MCA5Ni40NywxMDkuNTIgOTcuMDcsMTA5LjYxIDk3LjY3LDEwOS42NiA5OC4yNywxMDkuNzAgOTguODcsMTA5LjcwIDk5LjQ3LDEwOS42MyAxMDAuMDgsMTA5LjUzIDEwMC42OCwxMDkuNDQgMTAxLjI4LDEwOS4zNyAxMDEuODgsMTA5LjMzIDEwMi40OCwxMDkuMjkgMTAzLjA4LDEwOS4yMyAxMDMuNjgsMTA5LjE3IDEwNC4yOCwxMDkuMTYgMTA0Ljg5LDEwOS4xOSAxMDUuNDksMTA5LjI0IDEwNi4wOSwxMDkuMjMgMTA2LjY5LDEwOS4xNiAxMDcuMjksMTA5LjEwIDEwNy44OSwxMDkuMTIgMTA4LjQ5LDEwOS4yMiAxMDkuMDksMTA5LjMzIDEwOS42OSwxMDkuNDAgMTEwLjMwLDEwOS40MiAxMTAuOTAsMTA5LjM4IDExMS41MCwxMDkuMzIgMTEyLjEwLDEwOS4yNiAxMTIuNzAsMTA5LjIzIDExMy4zMCwxMDkuMjIgMTEzLjkwLDEwOS4yNCAxMTQuNTAsMTA5LjI2IDExNS4xMCwxMDkuMjcgMTE1LjcxLDEwOS4yNiAxMTYuMzEsMTA5LjI0IDExNi45MSwxMDkuMjQgMTE3LjUxLDEwOS4yOCAxMTguMTEsMTA5LjM1IDExOC43MSwxMDkuNDMgMTE5LjMxLDEwOS41MSAxMTkuOTEsMTA5LjU3IDEyMC41MiwxMDkuNTggMTIxLjEyLDEwOS41NCAxMjEuNzIsMTA5LjQ4IDEyMi4zMiwxMDkuNDIgMTIyLjkyLDEwOS4zOCAxMjMuNTIsMTA5LjM0IDEyNC4xMiwxMDkuMzAgMTI0LjcyLDEwOS4yNyAxMjUuMzIsMTA5LjMyIDEyNS45MywxMDkuNDMgMTI2LjUzLDEwOS41NCAxMjcuMTMsMTA5LjYxIDEyNy43MywxMDkuNjMgMTI4LjMzLDEwOS42NCAxMjguOTMsMTA5LjY1IDEyOS41MywxMDkuNjggMTMwLjEzLDEwOS43MiAxMzAuNzMsMTA5Ljc1IDEzMS4zNCwxMDkuNzggMTMxLjk0LDEwOS44MiAxMzIuNTQsMTA5Ljg4IDEzMy4xNCwxMDkuOTMgMTMzLjc0LDEwOS45NiAxMzQuMzQsMTA5Ljk2IDEzNC45NCwxMDkuOTEgMTM1LjU0LDEwOS44MyAxMzYuMTQsMTA5Ljc0IDEzNi43NSwxMDkuNjIgMTM3LjM1LDEwOS40OCAxMzcuOTUsMTA5LjMzIDEzOC41NSwxMDkuMTcgMTM5LjE1LDEwOS4wMiAxMzkuNzUsMTA4Ljk0IDE0MC4zNSwxMDguOTIgMTQwLjk1LDEwOC45MiAxNDEuNTYsMTA4LjkyIDE0Mi4xNiwxMDguOTYgMTQyLjc2LDEwOS4wMiAxNDMuMzYsMTA5LjA4IDE0My45NiwxMDkuMTQgMTQ0LjU2LDEwOS4yMSAxNDUuMTYsMTA5LjI4IDE0NS43NiwxMDkuMzIgMTQ2LjM2LDEwOS4zMCAxNDYuOTcsMTA5LjIyIDE0Ny41NywxMDkuMTQgMTQ4LjE3LDEwOS4xMCAxNDguNzcsMTA5LjE1IDE0OS4zNywxMDkuMjQgMTQ5Ljk3LDEwOS4zMyAxNTAuNTcsMTA5LjQxIDE1MS4xNywxMDkuNDUgMTUxLjc3LDEwOS40NSAxNTIuMzgsMTA5LjQxIDE1Mi45OCwxMDkuMzUgMTUzLjU4LDEwOS4zMSAxNTQuMTgsMTA5LjMwIDE1NC43OCwxMDkuMjggMTU1LjM4LDEwOS4yMyAxNTUuOTgsMTA5LjE2IDE1Ni41OCwxMDkuMTAgMTU3LjE5LDEwOS4wNyAxNTcuNzksMTA5LjA2IDE1OC4zOSwxMDkuMDIgMTU4Ljk5LDEwOC45NCAxNTkuNTksMTA4Ljg1IDE2MC4xOSwxMDguNzkgMTYwLjc5LDEwOC43NCAxNjEuMzksMTA4LjY3IDE2MS45OSwxMDguNjEgMTYyLjYwLDEwOC41OSAxNjMuMjAsMTA4LjY0IDE2My44MCwxMDguNzUgMTY0LjQwLDEwOC44OCAxNjUuNjksMTA4LjcxIDE2Ni4wOCwxMDcuNDUgMTY2LjE2LDEwNi45MCAxNjYuMjYsMTA2LjM2IDE2Ni4zOSwxMDUuODMgMTY2LjU2LDEwNS4zMSAxNjYuNzUsMTA0LjgwIDE2Ni45NiwxMDQuMzAgMTY3LjE4LDEwMy44MSAxNjcuNDMsMTAzLjMzIDE2Ny42OSwxMDIuODYgMTY3Ljk3LDEwMi40MSAxNjguMjYsMTAxLjk2IDE2OC41NCwxMDEuNTEgMTY4Ljg0LDEwMS4wNyAxNjkuMTYsMTAwLjY1IDE2OS41MSwxMDAuMjUgMTY5LjkxLDk5Ljg5IDE3MC4zMiw5OS41NiAxNzAuNzQsOTkuMjQgMTcxLjE1LDk4LjkyIDE3MS41Niw5OC41OSAxNzEuOTgsOTguMjYgMTcyLjQwLDk3LjkzIDE3Mi44Myw5Ny41OSAxNzMuMjcsOTcuMjUgMTczLjczLDk2LjkzIDE3NC4yMCw5Ni42MyAxNzQuNzEsOTYuMzggMTc1LjI0LDk2LjE5IDE3NS43OCw5Ni4wNiAxNzYuMzQsOTYuMDAgMTc2LjkxLDk2LjAyIDE3Ny40OSw5Ni4xNiAxNzkuMDIsOTUuOTIgMTc5LjYzLDk0LjM4IDE3OS44NSw5My43OCAxODAuMDUsOTMuMTggMTgwLjIxLDkyLjU4IDE4MC4zMiw5MS45OCAxODAuMzQsOTEuMzcgMTgwLjMyLDkwLjc3IDE4MC4yOCw5MC4xNyAxODAuMjIsODkuNTcgMTgwLjEwLDg4Ljk3IDE3OS45Nyw4OC4zNyAxNzkuODQsODcuNzcgMTc5LjcxLDg3LjE3IDE3OS41OSw4Ni41NyAxNzkuNDUsODUuOTYgMTc5LjI5LDg1LjM2IDE3OS4xNSw4NC43NiAxNzkuMDcsODQuMTYgMTc5LjA3LDgzLjU2IDE3OS4xMSw4Mi45NiAxNzkuMTQsODIuMzYgMTc5LjExLDgxLjc2IDE3OS4wMyw4MS4xNSAxNzguOTMsODAuNTUgMTc4Ljg0LDc5Ljk1IDE3OC43OCw3OS4zNSAxNzguNzQsNzguNzUgMTc4LjcwLDc4LjE1IDE3OC42NSw3Ny41NSAxNzguNTgsNzYuOTUgMTc4LjUyLDc2LjM1IDE3OC40Niw3NS43NCAxNzguNDUsNzUuMTQgMTc4LjQ5LDc0LjU0IDE3OC42MCw3My45NCAxNzguNzMsNzMuMzQgMTc4Ljg2LDcyLjc0IDE3OC45NCw3Mi4xNCAxNzkuMDAsNzEuNTQgMTc5LjAzLDcwLjk0IDE3OS4wNSw3MC4zMyAxNzkuMDIsNjkuNzMgMTc4LjkyLDY5LjEzIDE3OC43OCw2OC41MyAxNzguNjIsNjcuOTMgMTc4LjQ3LDY3LjMzIDE3OC4zNSw2Ni43MyAxNzguMjYsNjYuMTMgMTc4LjIwLDY1LjUzIDE3OC4xOSw2NC45MiAxNzguMjMsNjQuMzIgMTc4LjI4LDYzLjcyIDE3OC4zNCw2My4xMiAxNzguNDAsNjIuNTIgMTc4LjQ3LDYxLjkyIDE3OC41NSw2MS4zMiAxNzguNjEsNjAuNzIgMTc4LjYzLDYwLjExIDE3OC42MCw1OS41MSAxNzguNjEsNTguOTEgMTc4LjY3LDU4LjMxIDE3OC43NCw1Ny43MSAxNzguNzcsNTcuMTEgMTc4Ljc5LDU2LjUxIDE3OC44NSw1NS45MSAxNzguOTQsNTUuMzEgMTc5LjAxLDU0LjcwIDE3OS4wNCw1NC4xMCAxNzkuMDYsNTMuNTAgMTc5LjEwLDUyLjkwIDE3OS4xNSw1Mi4zMCAxNzkuMjEsNTEuNzAgMTc5LjI2LDUxLjEwIDE3OS4zMiw1MC41MCAxNzkuMzcsNDkuOTAgMTc5LjQxLDQ5LjI5IDE3OS40Miw0OC42OSAxNzkuNDAsNDguMDkgMTc5LjM2LDQ3LjQ5IDE3OS4zMiw0Ni44OSAxNzkuMzEsNDYuMjkgMTc5LjM0LDQ1LjY5IDE3OS4zOSw0NS4wOSAxNzkuNDQsNDQuNDggMTc5LjQ4LDQzLjg4IDE3OS41NCw0My4yOCAxNzkuNTcsNDIuNjggMTc5LjUyLDQyLjA4IDE3OS4zNiw0MS40OCAxNzkuMTIsNDAuODggMTc4Ljg0LDQwLjI4IDE3OC41OSwzOS42OCAxNzguNDMsMzkuMDcgMTc4LjMxLDM4LjQ3IDE3OC4yMywzNy44NyAxNzguMjIsMzcuMjcgMTc4LjI4LDM2LjY3IDE3OC40MCwzNi4wNyAxNzguNTMsMzUuNDAgMTc4LjIzLDM0LjQ1IDE3Ny4zMSwzNC4yMyAxNzYuNzUsMzQuMTEgMTc2LjIwLDM0LjAwIDE3NS42NSwzMy44NyAxNzUuMTEsMzMuNzIgMTc0LjYwLDMzLjUwIDE3NC4xMCwzMy4yNCAxNzMuNjEsMzIuOTcgMTczLjE0LDMyLjcxIDE3Mi42OCwzMi40MSAxNzIuMjQsMzIuMDggMTcxLjgxLDMxLjc3IDE3MS4zNCwzMS41MCAxNzAuODIsMzEuMzAgMTcwLjI2LDMxLjExIDE2OS43MiwzMC44OCAxNjkuMjUsMzAuNTYgMTY4LjgzLDMwLjE4IDE2OC40NiwyOS43NSAxNjguMTIsMjkuMjkgMTY3Ljc5LDI4LjgzIDE2Ny40OSwyOC4zNSAxNjcuMjEsMjcuODUgMTY2Ljk4LDI3LjMzIDE2Ni44MSwyNi43OSAxNjYuNjYsMjYuMjQgMTY2LjUzLDI1LjcwIDE2Ni40MiwyNS4xNSAxNjYuMzAsMjQuNjEgMTY2LjE2LDI0LjA3IDE2Ni4wNSwyMy41MyAxNjYuMDEsMjIuOTcgMTY2LjAzLDIyLjI2IDE2NS40MiwyMS4wMyAxNjQuMjUsMjAuNzggMTYzLjY1LDIwLjcxIDE2My4wNCwyMC42OSAxNjIuNDQsMjAuNzIgMTYxLjg0LDIwLjc4IDE2MS4yNCwyMC44NiAxNjAuNjQsMjAuODggMTYwLjA0LDIwLjgyIDE1OS40NCwyMC43NSAxNTguODQsMjAuNzQgMTU4LjI0LDIwLjgzIDE1Ny42MywyMC45MyAxNTcuMDMsMjEuMDEgMTU2LjQzLDIxLjAyIDE1NS44MywyMC45NyAxNTUuMjMsMjAuOTIgMTU0LjYzLDIwLjg3IDE1NC4wMywyMC44MCAxNTMuNDMsMjAuNzAgMTUyLjgyLDIwLjU3IDE1Mi4yMiwyMC40NiAxNTEuNjIsMjAuNDAgMTUxLjAyLDIwLjM2IDE1MC40MiwyMC4zMSAxNDkuODIsMjAuMjggMTQ5LjIyLDIwLjMwIDE0OC42MiwyMC4zOCAxNDguMDIsMjAuNDggMTQ3LjQxLDIwLjU5IDE0Ni44MSwyMC42OSAxNDYuMjEsMjAuNzYgMTQ1LjYxLDIwLjgxIDE0NS4wMSwyMC44NiAxNDQuNDEsMjAuOTMgMTQzLjgxLDIxLjA0IDE0My4yMSwyMS4xOCAxNDIuNjEsMjEuMjkgMTQyLjAwLDIxLjMzIDE0MS40MCwyMS4zOSAxNDAuODAsMjEuNDIgMTQwLjIwLDIxLjQzIDEzOS42MCwyMS40NSAxMzkuMDAsMjEuNDggMTM4LjQwLDIxLjM0IDEzNy44MCwyMS4xOCAxMzcuMjAsMjEuMTMgMTM2LjU5LDIxLjE2IDEzNS45OSwyMS4yMiAxMzUuMzksMjEuMjYgMTM0Ljc5LDIxLjI1IDEzNC4xOSwyMS4xOSAxMzMuNTksMjEuMTEgMTMyLjk5LDIxLjAyIDEzMi4zOSwyMC45NyAxMzEuNzgsMjAuOTMgMTMxLjE4LDIwLjkyIDEzMC41OCwyMC45MCAxMjkuOTgsMjAuODcgMTI5LjM4LDIwLjg1IDEyOC43OCwyMC44NSAxMjguMTgsMjAuODQgMTI3LjU4LDIwLjgxIDEyNi45OCwyMC43NCAxMjYuMzcsMjAuNjcgMTI1Ljc3LDIwLjYyIDEyNS4xNywyMC42MSAxMjQuNTcsMjAuNjIgMTIzLjk3LDIwLjYzIDEyMy4zNywyMC42NCAxMjIuNzcsMjAuNjUgMTIyLjE3LDIwLjY3IDEyMS41NywyMC42OCAxMjAuOTYsMjAuNzAgMTIwLjM2LDIwLjcyIDExOS43NiwyMC43MiAxMTkuMTYsMjAuNzIgMTE4LjU2LDIwLjczIDExNy45NiwyMC43NiAxMTcuMzYsMjAuODAgMTE2Ljc2LDIwLjg0IDExNi4xNSwyMC44OSAxMTUuNTUsMjAuOTQgMTE0Ljk1LDIxLjAyIDExNC4zNSwyMS4xMCAxMTMuNzUsMjEuMTUgMTEzLjE1LDIxLjE5IDExMi41NSwyMS4yNCAxMTEuOTUsMjEuMjkgMTExLjM1LDIxLjMzIDExMC43NCwyMS4zMSAxMTAuMTQsMjEuMjEgMTA5LjU0LDIxLjA4IDEwOC45NCwyMS4wMSAxMDguMzQsMjEuMDQgMTA3Ljc0LDIxLjExIDEwNy4xNCwyMS4xOSAxMDYuNTQsMjEuMjggMTA1Ljk0LDIxLjM3IDEwNS4zMywyMS40NiAxMDQuNzMsMjEuNTMgMTA0LjEzLDIxLjU1IDEwMy41MywyMS41MyAxMDIuOTMsMjEuNTEgMTAyLjMzLDIxLjQ4IDEwMS43MywyMS40MSAxMDEuMTMsMjEuMzMgMTAwLjUzLDIxLjMyIDk5LjkyLDIxLjMyIDk5LjMyLDIxLjMxIDk4LjcyLDIxLjI1IDk4LjEyLDIxLjEzIDk3LjUyLDIxLjAxIDk2LjkyLDIwLjk0IDk2LjMyLDIwLjk1IDk1LjcyLDIwLjk4IDk1LjExLDIxLjAxIDk0LjUxLDIxLjAyIDkzLjkxLDIxLjAzIDkzLjMxLDIxLjA2IDkyLjcxLDIxLjEwIDkyLjExLDIxLjEzIDkxLjUxLDIxLjE4IDkwLjkxLDIxLjI0IDkwLjMxLDIxLjMxIDg5LjcwLDIxLjM1IDg5LjEwLDIxLjM1IDg4LjUwLDIxLjMzIDg3LjkwLDIxLjMwIDg3LjMwLDIxLjI5IDg2LjcwLDIxLjMwIDg2LjEwLDIxLjM1IDg1LjUwLDIxLjM5IDg0LjkwLDIxLjQyIDg0LjI5LDIxLjQxIDgzLjY5LDIxLjM3IDgzLjA5LDIxLjMzIDgyLjQ5LDIxLjMxIDgxLjg5LDIxLjMzIDgxLjI5LDIxLjM2IDgwLjY5LDIxLjM5IDgwLjA5LDIxLjM5IDc5LjQ4LDIxLjQwIDc4Ljg4LDIxLjQwIDc4LjI4LDIxLjQxIDc3LjY4LDIxLjQwIDc3LjA4LDIxLjM2IDc2LjQ4LDIxLjI5IDc1Ljg4LDIxLjI0IDc1LjI4LDIxLjIyIDc0LjY4LDIxLjI1IDc0LjA3LDIxLjI4IDczLjQ3LDIxLjMyIDcyLjg3LDIxLjM2IDcyLjI3LDIxLjM0IDcxLjY3LDIxLjMwIDcxLjA3LDIxLjI4IDcwLjQ3LDIxLjMyIDY5Ljg3LDIxLjQxIDY5LjI3LDIxLjUxIDY4LjY2LDIxLjU5IDY4LjA2LDIxLjYxIDY3LjQ2LDIxLjYxIDY2Ljg2LDIxLjU3IDY2LjI2LDIxLjQ5IDY1LjY2LDIxLjM2IDY1LjA2LDIxLjIwIDY0LjQ2LDIxLjAyIDYzLjg2LDIwLjgyIDYzLjI1LDIwLjYyIDYyLjY1LDIwLjQyIDYyLjA1LDIwLjI2IDYxLjQ1LDIwLjE3IDYwLjg1LDIwLjE3IDYwLjI1LDIwLjIxIDU5LjY1LDIwLjMwIDU5LjA1LDIwLjQyIDU4LjQ0LDIwLjU2IDU3Ljg0LDIwLjc2IDU3LjI0LDIwLjk2IDU2LjY0LDIxLjA5IDU2LjA0LDIxLjA3IDU1LjQ0LDIwLjkwIDU0Ljg0LDIwLjY2IDU0LjI0LDIwLjQ0IDUzLjY0LDIwLjMwIDUzLjAzLDIwLjIwIDUyLjQzLDIwLjEzIDUxLjgzLDIwLjA3IDUxLjIzLDIwLjAxIDUwLjYzLDE5Ljk4IDUwLjAzLDIwLjAwIDQ5LjQzLDIwLjA5IDQ4LjgzLDIwLjI0IDQ4LjIzLDIwLjQxIDQ3LjYyLDIwLjYwIDQ3LjAyLDIwLjc2IDQ2LjQyLDIwLjg5IDQ1LjgyLDIxLjAwIDQ1LjIyLDIxLjA3IDQ0LjYyLDIxLjEyIDQ0LjAyLDIxLjE2IDQzLjQyLDIxLjE4IDQyLjgxLDIxLjE5IDQyLjIxLDIxLjE4IDQxLjYxLDIxLjEyIDQxLjAxLDIwLjk4IDQwLjQxLDIwLjgzIDM5LjgxLDIwLjcyIDM5LjIxLDIwLjY3IDM4LjYxLDIwLjY3IDM4LjAxLDIwLjY4IDM3LjQwLDIwLjY2IDM2LjgwLDIwLjY0IDM2LjIwLDIwLjY2IDM1LjYwLDIwLjcwIDM1LjAwLDIwLjcyIFoiLz48cGF0aCBmaWxsPSIjNDE2NDdjIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0gMzcuMDAsMjguMjQgMzcuNjAsMjguMjggMzguMjAsMjguMzYgMzguODAsMjguNDUgMzkuNDEsMjguNTEgNDAuMDEsMjguNTEgNDAuNjEsMjguNDggNDEuMjEsMjguNDYgNDEuODEsMjguNDcgNDIuNDEsMjguNTAgNDMuMDIsMjguNTMgNDMuNjIsMjguNTQgNDQuMjIsMjguNTMgNDQuODIsMjguNTEgNDUuNDIsMjguNDggNDYuMDIsMjguNDUgNDYuNjMsMjguNDMgNDcuMjMsMjguNDEgNDcuODMsMjguNDIgNDguNDMsMjguNDUgNDkuMDMsMjguNDkgNDkuNjMsMjguNTMgNTAuMjQsMjguNTcgNTAuODQsMjguNjEgNTEuNDQsMjguNjYgNTIuMDQsMjguNzQgNTIuNjQsMjguODAgNTMuMjQsMjguODQgNTMuODUsMjguODMgNTQuNDUsMjguODAgNTUuMDUsMjguNzUgNTUuNjUsMjguNzAgNTYuMjUsMjguNjUgNTYuODUsMjguNTkgNTcuNDYsMjguNTQgNTguMDYsMjguNTAgNTguNjYsMjguNDcgNTkuMjYsMjguNDQgNTkuODYsMjguNDEgNjAuNDYsMjguMzcgNjEuMDcsMjguMzYgNjEuNjcsMjguMzUgNjIuMjcsMjguMzUgNjIuODcsMjguMzQgNjMuNDcsMjguMzQgNjQuMDcsMjguMzEgNjQuNjgsMjguMjkgNjUuMjgsMjguMjggNjUuODgsMjguMzAgNjYuNDgsMjguMzUgNjcuMDgsMjguNDIgNjcuNjgsMjguNDcgNjguMjksMjguNDcgNjguODksMjguNDYgNjkuNDksMjguNDIgNzAuMDksMjguMzkgNzAuNjksMjguMzcgNzEuMjksMjguMzMgNzEuOTAsMjguMzAgNzIuNTAsMjguMjcgNzMuMTAsMjguMjcgNzMuNzAsMjguMzAgNzQuMzAsMjguMzUgNzQuOTAsMjguMzkgNzUuNTEsMjguNDMgNzYuMTEsMjguNDggNzYuNzEsMjguNTMgNzcuMzEsMjguNTYgNzcuOTEsMjguNTggNzguNTEsMjguNTkgNzkuMTIsMjguNjAgNzkuNzIsMjguNTkgODAuMzIsMjguNTggODAuOTIsMjguNTQgODEuNTIsMjguNTAgODIuMTIsMjguNDUgODIuNzIsMjguNDAgODMuMzMsMjguMzYgODMuOTMsMjguMzMgODQuNTMsMjguMzEgODUuMTMsMjguMjkgODUuNzMsMjguMjYgODYuMzMsMjguMjQgODYuOTQsMjguMjQgODcuNTQsMjguMjYgODguMTQsMjguMjkgODguNzQsMjguMzEgODkuMzQsMjguMzMgODkuOTQsMjguMzQgOTAuNTUsMjguMzUgOTEuMTUsMjguMzcgOTEuNzUsMjguNDAgOTIuMzUsMjguNDMgOTIuOTUsMjguNDQgOTMuNTUsMjguNDUgOTQuMTYsMjguNDkgOTQuNzYsMjguNTUgOTUuMzYsMjguNjIgOTUuOTYsMjguNjggOTYuNTYsMjguNjkgOTcuMTYsMjguNjggOTcuNzcsMjguNjUgOTguMzcsMjguNjIgOTguOTcsMjguNjIgOTkuNTcsMjguNjMgMTAwLjE3LDI4LjY0IDEwMC43NywyOC42NSAxMDEuMzgsMjguNjYgMTAxLjk4LDI4LjY3IDEwMi41OCwyOC42OCAxMDMuMTgsMjguNjkgMTAzLjc4LDI4LjcwIDEwNC4zOCwyOC42OCAxMDQuOTksMjguNjUgMTA1LjU5LDI4LjYyIDEwNi4xOSwyOC42MSAxMDYuNzksMjguNjAgMTA3LjM5LDI4LjU5IDEwNy45OSwyOC41NiAxMDguNjAsMjguNTAgMTA5LjIwLDI4LjQ1IDEwOS44MCwyOC40MCAxMTAuNDAsMjguMzcgMTExLjAwLDI4LjM2IDExMS42MCwyOC4zNSAxMTIuMjEsMjguMzYgMTEyLjgxLDI4LjM5IDExMy40MSwyOC40MiAxMTQuMDEsMjguNDIgMTE0LjYxLDI4LjQwIDExNS4yMSwyOC40MCAxMTUuODIsMjguNDYgMTE2LjQyLDI4LjU2IDExNy4wMiwyOC42NiAxMTcuNjIsMjguNzIgMTE4LjIyLDI4LjcwIDExOC44MiwyOC42NSAxMTkuNDMsMjguNTkgMTIwLjAzLDI4LjU0IDEyMC42MywyOC41MCAxMjEuMjMsMjguNDYgMTIxLjgzLDI4LjQzIDEyMi40MywyOC40MCAxMjMuMDMsMjguMzkgMTIzLjY0LDI4LjQwIDEyNC4yNCwyOC40MSAxMjQuODQsMjguNDQgMTI1LjQ0LDI4LjQ2IDEyNi4wNCwyOC40NyAxMjYuNjQsMjguNDkgMTI3LjI1LDI4LjUwIDEyNy44NSwyOC41MSAxMjguNDUsMjguNTQgMTI5LjA1LDI4LjU4IDEyOS42NSwyOC42MSAxMzAuMjUsMjguNjUgMTMwLjg2LDI4LjcwIDEzMS40NiwyOC43NCAxMzIuMDYsMjguNzcgMTMyLjY2LDI4Ljc3IDEzMy4yNiwyOC43NCAxMzMuODYsMjguNzEgMTM0LjQ3LDI4LjcxIDEzNS4wNywyOC43MiAxMzUuNjcsMjguNzQgMTM2LjI3LDI4Ljc2IDEzNi44NywyOC43NSAxMzcuNDcsMjguNzMgMTM4LjA4LDI4LjY5IDEzOC42OCwyOC42NCAxMzkuMjgsMjguNjEgMTM5Ljg4LDI4LjU3IDE0MC40OCwyOC41NSAxNDEuMDgsMjguNTIgMTQxLjY5LDI4LjUwIDE0Mi4yOSwyOC40OCAxNDIuODksMjguNDggMTQzLjQ5LDI4LjQ4IDE0NC4wOSwyOC40OSAxNDQuNjksMjguNDkgMTQ1LjMwLDI4LjQ5IDE0NS45MCwyOC40OCAxNDYuNTAsMjguNDcgMTQ3LjEwLDI4LjQ2IDE0Ny43MCwyOC40NiAxNDguMzAsMjguNDcgMTQ4LjkxLDI4LjQ4IDE0OS41MSwyOC40OSAxNTAuMTEsMjguNDkgMTUwLjcxLDI4LjUxIDE1MS4zMSwyOC41NCAxNTEuOTEsMjguNTggMTUyLjUyLDI4LjYyIDE1My4xMiwyOC42NiAxNTMuNzIsMjguNjcgMTU0LjMyLDI4LjY3IDE1NC45MiwyOC42NiAxNTUuNTIsMjguNjQgMTU2LjEzLDI4LjU5IDE1Ni43MywyOC40OSAxNTcuMzMsMjguMzkgMTU3LjkzLDI4LjMwIDE1OC41MywyOC4yOCAxNTkuMTMsMjguMzAgMTU5Ljc0LDI4LjM2IDE2MC4zNCwyOC40MSAxNjAuOTQsMjguNDEgMTYxLjU0LDI4LjQwIDE2Mi4xNCwyOC4zOCAxNjIuNjEsMjguMzQgMTYyLjY1LDI4LjQ2IDE2Mi42NiwyOC45OSAxNjIuNzMsMjkuNjEgMTYyLjg1LDMwLjIzIDE2Mi45OCwzMC44NSAxNjMuMTUsMzEuNDYgMTYzLjM0LDMyLjA3IDE2My41NywzMi42OCAxNjMuODQsMzMuMjcgMTY0LjE3LDMzLjgzIDE2NC41OSwzNC4zMyAxNjUuMDUsMzQuNzkgMTY1LjU1LDM1LjIxIDE2Ni4wNywzNS41OCAxNjYuNjIsMzUuOTIgMTY3LjE4LDM2LjIzIDE2Ny43NSwzNi41MSAxNjguMzMsMzYuNzkgMTY4LjkxLDM3LjA0IDE2OS41MiwzNy4yNCAxNzAuMTQsMzcuMzkgMTcwLjc3LDM3LjUxIDE3MS4zOCwzNy41OSAxNzEuNTAsMzcuNDYgMTcxLjMxLDM3LjY1IDE3MS4yOCwzOC4yNSAxNzEuMjQsMzguODUgMTcxLjIwLDM5LjQ1IDE3MS4xNCw0MC4wNSAxNzEuMDcsNDAuNjYgMTcxLjA1LDQxLjI2IDE3MS4wNSw0MS44NiAxNzEuMDUsNDIuNDYgMTcxLjA5LDQzLjA2IDE3MS4xNyw0My42NiAxNzEuMjAsNDQuMjcgMTcxLjIxLDQ0Ljg3IDE3MS4yNCw0NS40NyAxNzEuMjYsNDYuMDcgMTcxLjMwLDQ2LjY3IDE3MS4zNCw0Ny4yNyAxNzEuMzksNDcuODggMTcxLjQ0LDQ4LjQ4IDE3MS41MSw0OS4wOCAxNzEuNTksNDkuNjggMTcxLjY3LDUwLjI4IDE3MS43MSw1MC44OCAxNzEuNzEsNTEuNDkgMTcxLjY4LDUyLjA5IDE3MS42Myw1Mi42OSAxNzEuNTksNTMuMjkgMTcxLjU2LDUzLjg5IDE3MS41NSw1NC40OSAxNzEuNTQsNTUuMTAgMTcxLjU0LDU1LjcwIDE3MS41Miw1Ni4zMCAxNzEuNTEsNTYuOTAgMTcxLjQ5LDU3LjUwIDE3MS40Niw1OC4xMCAxNzEuNDMsNTguNzAgMTcxLjQwLDU5LjMxIDE3MS4zNiw1OS45MSAxNzEuMzQsNjAuNTEgMTcxLjM0LDYxLjExIDE3MS4zNiw2MS43MSAxNzEuNDAsNjIuMzEgMTcxLjQzLDYyLjkyIDE3MS40NSw2My41MiAxNzEuNDksNjQuMTIgMTcxLjUyLDY0LjcyIDE3MS41NSw2NS4zMiAxNzEuNTUsNjUuOTIgMTcxLjU0LDY2LjUzIDE3MS41MSw2Ny4xMyAxNzEuNDksNjcuNzMgMTcxLjQ4LDY4LjMzIDE3MS40NCw2OC45MyAxNzEuNDAsNjkuNTMgMTcxLjM2LDcwLjE0IDE3MS4zNSw3MC43NCAxNzEuMzQsNzEuMzQgMTcxLjM0LDcxLjk0IDE3MS4zNCw3Mi41NCAxNzEuMzUsNzMuMTQgMTcxLjM3LDczLjc1IDE3MS40MCw3NC4zNSAxNzEuNDUsNzQuOTUgMTcxLjUxLDc1LjU1IDE3MS41Nyw3Ni4xNSAxNzEuNjMsNzYuNzUgMTcxLjY4LDc3LjM2IDE3MS43Myw3Ny45NiAxNzEuNzgsNzguNTYgMTcxLjgyLDc5LjE2IDE3MS44NCw3OS43NiAxNzEuODUsODAuMzYgMTcxLjg2LDgwLjk3IDE3MS44Nyw4MS41NyAxNzEuODUsODIuMTcgMTcxLjgzLDgyLjc3IDE3MS44Myw4My4zNyAxNzEuODIsODMuOTcgMTcxLjgwLDg0LjU4IDE3MS43Nyw4NS4xOCAxNzEuNzQsODUuNzggMTcxLjY4LDg2LjM4IDE3MS42Miw4Ni45OCAxNzEuNTgsODcuNTggMTcxLjUzLDg4LjE5IDE3MS40OSw4OC43OSAxNzEuNDYsODkuMzkgMTcxLjQyLDg5Ljk5IDE3MS4zOCw5MC41OSAxNzEuMzQsOTEuMTkgMTcxLjI5LDkxLjgwIDE3MS4yNCw5Mi40MCAxNzEuNDIsOTIuNDQgMTcxLjM0LDkyLjE5IDE3MC42OSw5Mi4yMyAxNzAuMDQsOTIuMzcgMTY5LjQzLDkyLjYwIDE2OC44Myw5Mi44OCAxNjguMjYsOTMuMTggMTY3LjcxLDkzLjUxIDE2Ny4xNyw5My44NSAxNjYuNjUsOTQuMjEgMTY2LjE2LDk0LjYwIDE2NS42Nyw5NS4wMCAxNjUuMTgsOTUuNDAgMTY0LjcwLDk1LjgzIDE2NC4yNCw5Ni4yOCAxNjMuNzksOTYuNzYgMTYzLjM4LDk3LjI3IDE2My4wMSw5Ny44MyAxNjIuNzEsOTguNDIgMTYyLjUxLDk5LjA2IDE2Mi40MSw5OS43MSAxNjIuMzYsMTAwLjM3IDE2Mi4zMywxMDEuMDMgMTYyLjM5LDEwMS40NiAxNjIuNTEsMTAxLjQyIDE2Mi4xMCwxMDEuNDQgMTYxLjUwLDEwMS40OCAxNjAuODksMTAxLjUwIDE2MC4yOSwxMDEuNDkgMTU5LjY5LDEwMS40OCAxNTkuMDksMTAxLjUwIDE1OC40OSwxMDEuNTMgMTU3Ljg5LDEwMS41NiAxNTcuMjgsMTAxLjU5IDE1Ni42OCwxMDEuNjMgMTU2LjA4LDEwMS42NyAxNTUuNDgsMTAxLjcwIDE1NC44OCwxMDEuNzEgMTU0LjI4LDEwMS42OCAxNTMuNjcsMTAxLjYxIDE1My4wNywxMDEuNTIgMTUyLjQ3LDEwMS40MyAxNTEuODcsMTAxLjM1IDE1MS4yNywxMDEuMzAgMTUwLjY3LDEwMS4yNiAxNTAuMDYsMTAxLjI0IDE0OS40NiwxMDEuMjUgMTQ4Ljg2LDEwMS4yNiAxNDguMjYsMTAxLjMwIDE0Ny42NiwxMDEuMzYgMTQ3LjA2LDEwMS40NiAxNDYuNDUsMTAxLjU2IDE0NS44NSwxMDEuNjYgMTQ1LjI1LDEwMS43MyAxNDQuNjUsMTAxLjc0IDE0NC4wNSwxMDEuNzIgMTQzLjQ1LDEwMS42OSAxNDIuODQsMTAxLjY3IDE0Mi4yNCwxMDEuNjggMTQxLjY0LDEwMS43MSAxNDEuMDQsMTAxLjc0IDE0MC40NCwxMDEuNzYgMTM5Ljg0LDEwMS43MyAxMzkuMjQsMTAxLjY4IDEzOC42MywxMDEuNjMgMTM4LjAzLDEwMS41OCAxMzcuNDMsMTAxLjU1IDEzNi44MywxMDEuNTIgMTM2LjIzLDEwMS40OSAxMzUuNjMsMTAxLjQ1IDEzNS4wMiwxMDEuNDAgMTM0LjQyLDEwMS4zNSAxMzMuODIsMTAxLjMyIDEzMy4yMiwxMDEuMzMgMTMyLjYyLDEwMS4zNSAxMzIuMDIsMTAxLjM3IDEzMS40MSwxMDEuMzggMTMwLjgxLDEwMS4zOCAxMzAuMjEsMTAxLjM1IDEyOS42MSwxMDEuMzIgMTI5LjAxLDEwMS4yOCAxMjguNDEsMTAxLjI3IDEyNy44MCwxMDEuMjkgMTI3LjIwLDEwMS4zNCAxMjYuNjAsMTAxLjQwIDEyNi4wMCwxMDEuNDMgMTI1LjQwLDEwMS40NyAxMjQuODAsMTAxLjUyIDEyNC4xOSwxMDEuNTUgMTIzLjU5LDEwMS41NyAxMjIuOTksMTAxLjU1IDEyMi4zOSwxMDEuNTIgMTIxLjc5LDEwMS41MSAxMjEuMTksMTAxLjUxIDEyMC41OCwxMDEuNTIgMTE5Ljk4LDEwMS41MyAxMTkuMzgsMTAxLjUzIDExOC43OCwxMDEuNTMgMTE4LjE4LDEwMS41NCAxMTcuNTgsMTAxLjU1IDExNi45NywxMDEuNTYgMTE2LjM3LDEwMS41NyAxMTUuNzcsMTAxLjU5IDExNS4xNywxMDEuNjIgMTE0LjU3LDEwMS42NSAxMTMuOTcsMTAxLjY3IDExMy4zNiwxMDEuNjUgMTEyLjc2LDEwMS42MiAxMTIuMTYsMTAxLjU5IDExMS41NiwxMDEuNTcgMTEwLjk2LDEwMS41MyAxMTAuMzYsMTAxLjQ4IDEwOS43NSwxMDEuNDIgMTA5LjE1LDEwMS4zNyAxMDguNTUsMTAxLjMzIDEwNy45NSwxMDEuMzAgMTA3LjM1LDEwMS4yOSAxMDYuNzUsMTAxLjMwIDEwNi4xNCwxMDEuMzUgMTA1LjU0LDEwMS40MiAxMDQuOTQsMTAxLjUyIDEwNC4zNCwxMDEuNjIgMTAzLjc0LDEwMS43MiAxMDMuMTQsMTAxLjgxIDEwMi41MywxMDEuODkgMTAxLjkzLDEwMS45MyAxMDEuMzMsMTAxLjkyIDEwMC43MywxMDEuODkgMTAwLjEzLDEwMS44NyA5OS41MywxMDEuODYgOTguOTIsMTAxLjg2IDk4LjMyLDEwMS44NSA5Ny43MiwxMDEuODMgOTcuMTIsMTAxLjgzIDk2LjUyLDEwMS44NSA5NS45MiwxMDEuODYgOTUuMzIsMTAxLjgzIDk0LjcxLDEwMS43NSA5NC4xMSwxMDEuNjcgOTMuNTEsMTAxLjU4IDkyLjkxLDEwMS40OSA5Mi4zMSwxMDEuNDAgOTEuNzEsMTAxLjMyIDkxLjEwLDEwMS4yNyA5MC41MCwxMDEuMjUgODkuOTAsMTAxLjI2IDg5LjMwLDEwMS4yNyA4OC43MCwxMDEuMjggODguMTAsMTAxLjI5IDg3LjQ5LDEwMS4zMiA4Ni44OSwxMDEuMzUgODYuMjksMTAxLjM4IDg1LjY5LDEwMS4zOSA4NS4wOSwxMDEuMzggODQuNDksMTAxLjM3IDgzLjg4LDEwMS4zNiA4My4yOCwxMDEuMzMgODIuNjgsMTAxLjI5IDgyLjA4LDEwMS4yNCA4MS40OCwxMDEuMTkgODAuODgsMTAxLjE4IDgwLjI3LDEwMS4yMCA3OS42NywxMDEuMjQgNzkuMDcsMTAxLjI4IDc4LjQ3LDEwMS4zMiA3Ny44NywxMDEuMzQgNzcuMjcsMTAxLjM0IDc2LjY2LDEwMS4zNSA3Ni4wNiwxMDEuMzggNzUuNDYsMTAxLjQyIDc0Ljg2LDEwMS40NyA3NC4yNiwxMDEuNTIgNzMuNjYsMTAxLjU2IDczLjA1LDEwMS42MSA3Mi40NSwxMDEuNjYgNzEuODUsMTAxLjcxIDcxLjI1LDEwMS43NSA3MC42NSwxMDEuODAgNzAuMDUsMTAxLjgzIDY5LjQ0LDEwMS44NCA2OC44NCwxMDEuODEgNjguMjQsMTAxLjc0IDY3LjY0LDEwMS42NiA2Ny4wNCwxMDEuNTggNjYuNDQsMTAxLjUyIDY1LjgzLDEwMS40OCA2NS4yMywxMDEuNDYgNjQuNjMsMTAxLjQ1IDY0LjAzLDEwMS40OCA2My40MywxMDEuNTUgNjIuODMsMTAxLjY1IDYyLjIyLDEwMS43NSA2MS42MiwxMDEuODMgNjEuMDIsMTAxLjg5IDYwLjQyLDEwMS45MyA1OS44MiwxMDEuOTYgNTkuMjIsMTAxLjk4IDU4LjYxLDEwMS45OSA1OC4wMSwxMDEuOTYgNTcuNDEsMTAxLjkwIDU2LjgxLDEwMS44MSA1Ni4yMSwxMDEuNzAgNTUuNjEsMTAxLjYwIDU1LjAxLDEwMS41MSA1NC40MCwxMDEuNDMgNTMuODAsMTAxLjM2IDUzLjIwLDEwMS4zMCA1Mi42MCwxMDEuMjUgNTIuMDAsMTAxLjIxIDUxLjQwLDEwMS4xOCA1MC43OSwxMDEuMTUgNTAuMTksMTAxLjEzIDQ5LjU5LDEwMS4xMiA0OC45OSwxMDEuMTIgNDguMzksMTAxLjE0IDQ3Ljc5LDEwMS4xOSA0Ny4xOCwxMDEuMjYgNDYuNTgsMTAxLjM3IDQ1Ljk4LDEwMS40OSA0NS4zOCwxMDEuNjAgNDQuNzgsMTAxLjcxIDQ0LjE4LDEwMS44MCA0My41NywxMDEuODcgNDIuOTcsMTAxLjkwIDQyLjM3LDEwMS44OCA0MS43NywxMDEuODMgNDEuMTcsMTAxLjc2IDQwLjU3LDEwMS42OSAzOS45NiwxMDEuNjEgMzkuMzYsMTAxLjU1IDM4Ljc2LDEwMS40OSAzOC4xNiwxMDEuNDcgMzcuNTgsMTAxLjQ0IDM3LjQzLDEwMS41NyAzNy41NiwxMDEuMzEgMzcuNDcsMTAwLjY4IDM3LjMwLDEwMC4wNiAzNy4wOCw5OS40NiAzNi44Myw5OC44OSAzNi41Nyw5OC4zMiAzNi4zMSw5Ny43NSAzNi4wMiw5Ny4xOSAzNS43MSw5Ni42NSAzNS4zNSw5Ni4xMyAzNC45Nyw5NS42MyAzNC41Niw5NS4xNSAzNC4xMSw5NC43MCAzMy42Miw5NC4yOSAzMy4xMSw5My45MCAzMi41OCw5My41NSAzMi4wMSw5My4yNCAzMS40MSw5My4wMSAzMC43OSw5Mi44MyAzMC4xNiw5Mi43MSAyOS41Myw5Mi42MyAyOC45MCw5Mi42MCAyOC40Miw5Mi42NCAyOC4zNyw5Mi41NSAyOC4zOCw5Mi4wNSAyOC40MCw5MS40NSAyOC40Miw5MC44NSAyOC40NSw5MC4yNSAyOC40OSw4OS42NSAyOC41Niw4OS4wNCAyOC42Niw4OC40NCAyOC43Miw4Ny44NCAyOC43NSw4Ny4yNCAyOC43Niw4Ni42NCAyOC43Nyw4Ni4wNCAyOC43OSw4NS40MyAyOC44Miw4NC44MyAyOC44NCw4NC4yMyAyOC44NSw4My42MyAyOC44Niw4My4wMyAyOC44Niw4Mi40MyAyOC44OCw4MS44MiAyOC44Nyw4MS4yMiAyOC44NCw4MC42MiAyOC43OCw4MC4wMiAyOC43MSw3OS40MiAyOC42Myw3OC44MiAyOC41NSw3OC4yMSAyOC40Niw3Ny42MSAyOC4zOCw3Ny4wMSAyOC4zMyw3Ni40MSAyOC4zMSw3NS44MSAyOC4zMCw3NS4yMSAyOC4zMSw3NC42MCAyOC4zNSw3NC4wMCAyOC4zOSw3My40MCAyOC40Myw3Mi44MCAyOC40NCw3Mi4yMCAyOC40Myw3MS42MCAyOC40MSw3MC45OSAyOC4zOSw3MC4zOSAyOC4zOSw2OS43OSAyOC4zOCw2OS4xOSAyOC4zNiw2OC41OSAyOC4zNCw2Ny45OSAyOC4zMiw2Ny4zOCAyOC4yOSw2Ni43OCAyOC4yNyw2Ni4xOCAyOC4yNSw2NS41OCAyOC4yNSw2NC45OCAyOC4yNSw2NC4zOCAyOC4yNCw2My43NyAyOC4yMiw2My4xNyAyOC4xNyw2Mi41NyAyOC4xMiw2MS45NyAyOC4wNyw2MS4zNyAyOC4wNiw2MC43NyAyOC4wOSw2MC4xNiAyOC4xNyw1OS41NiAyOC4yOCw1OC45NiAyOC4zOCw1OC4zNiAyOC40Niw1Ny43NiAyOC41NCw1Ny4xNiAyOC42Miw1Ni41NSAyOC42OSw1NS45NSAyOC43NSw1NS4zNSAyOC43OCw1NC43NSAyOC43OSw1NC4xNSAyOC43OCw1My41NSAyOC43Nyw1Mi45NCAyOC43Niw1Mi4zNCAyOC43NSw1MS43NCAyOC43Myw1MS4xNCAyOC43MSw1MC41NCAyOC43MSw0OS45NCAyOC43MSw0OS4zNCAyOC43Miw0OC43MyAyOC43Nyw0OC4xMyAyOC44MCw0Ny41MyAyOC44MCw0Ni45MyAyOC44MCw0Ni4zMyAyOC43OSw0NS43MyAyOC43MCw0NS4xMiAyOC42Myw0NC41MiAyOC42MCw0My45MiAyOC41Nyw0My4zMiAyOC41NCw0Mi43MiAyOC41Myw0Mi4xMiAyOC41NCw0MS41MSAyOC41Nyw0MC45MSAyOC42MCw0MC4zMSAyOC42MiwzOS43MSAyOC42NCwzOS4xMSAyOC42NywzOC41MSAyOC42OSwzNy45MCAyOC42NCwzNy41MSAyOC41MiwzNy41NiAyOC45NSwzNy40NiAyOS41NiwzNy4yNyAzMC4xNiwzNy4wNyAzMC43NSwzNi44NyAzMS4zNCwzNi42NyAzMS45MywzNi40OCAzMi41MywzNi4yNyAzMy4xMiwzNi4wMiAzMy43MCwzNS43NCAzNC4yOCwzNS40MyAzNC44NCwzNS4wNyAzNS4zOCwzNC42NyAzNS44NywzNC4yMiAzNi4zMCwzMy43MCAzNi42NCwzMy4xMiAzNi44OCwzMi40OSAzNy4wMSwzMS44MiAzNy4wNywzMS4xNSAzNy4xMSwzMC41MCAzNy4xNCwyOS44NiAzNy4xOCwyOS4yMyAzNy4yMSwyOC42MiAzNy4yMywyOC4wMSBaIE0gMzYuNTcsMjcuOTkgMzYuNjAsMjguNTggMzYuNjUsMjkuMTYgMzYuNjksMjkuNzcgMzYuNjcsMzAuMzggMzYuNTgsMzAuOTggMzYuNDEsMzEuNTcgMzYuMTgsMzIuMTQgMzUuOTEsMzIuNjkgMzUuNTksMzMuMjEgMzUuMjAsMzMuNjkgMzQuNzUsMzQuMTAgMzQuMjQsMzQuNDYgMzMuNzAsMzQuNzQgMzMuMTQsMzQuOTggMzIuNTgsMzUuMTggMzIuMDQsMzUuMzcgMzEuNTIsMzUuNTkgMzEuMDEsMzUuODMgMzAuNTAsMzYuMDYgMjkuOTYsMzYuMjUgMjkuNDEsMzYuMzggMjguODUsMzYuNDYgMjguMTMsMzYuNTUgMjcuNTksMzcuMTcgMjcuNjMsMzcuOTAgMjcuNjksMzguNTEgMjcuNzMsMzkuMTEgMjcuNzMsMzkuNzEgMjcuNzAsNDAuMzEgMjcuNjgsNDAuOTEgMjcuNjQsNDEuNTEgMjcuNTksNDIuMTIgMjcuNTIsNDIuNzIgMjcuNDYsNDMuMzIgMjcuNDAsNDMuOTIgMjcuMzcsNDQuNTIgMjcuMzAsNDUuMTIgMjcuMjEsNDUuNzMgMjcuMjAsNDYuMzMgMjcuMjAsNDYuOTMgMjcuMjAsNDcuNTMgMjcuMjIsNDguMTMgMjcuMjcsNDguNzMgMjcuMjgsNDkuMzQgMjcuMjksNDkuOTQgMjcuMzIsNTAuNTQgMjcuMzYsNTEuMTQgMjcuNDAsNTEuNzQgMjcuNDYsNTIuMzQgMjcuNTIsNTIuOTQgMjcuNTYsNTMuNTUgMjcuNTksNTQuMTUgMjcuNjIsNTQuNzUgMjcuNjEsNTUuMzUgMjcuNTgsNTUuOTUgMjcuNTEsNTYuNTUgMjcuNDEsNTcuMTYgMjcuMzEsNTcuNzYgMjcuMjMsNTguMzYgMjcuMTgsNTguOTYgMjcuMTksNTkuNTYgMjcuMjQsNjAuMTYgMjcuMjgsNjAuNzcgMjcuMzEsNjEuMzcgMjcuMzIsNjEuOTcgMjcuMzIsNjIuNTcgMjcuMzQsNjMuMTcgMjcuMzcsNjMuNzcgMjcuNDEsNjQuMzggMjcuNDQsNjQuOTggMjcuNDUsNjUuNTggMjcuNDMsNjYuMTggMjcuNDIsNjYuNzggMjcuNDEsNjcuMzggMjcuNDAsNjcuOTkgMjcuMzksNjguNTkgMjcuMzksNjkuMTkgMjcuMzksNjkuNzkgMjcuMzksNzAuMzkgMjcuMzcsNzAuOTkgMjcuMzMsNzEuNjAgMjcuMjYsNzIuMjAgMjcuMjAsNzIuODAgMjcuMTYsNzMuNDAgMjcuMTIsNzQuMDAgMjcuMDgsNzQuNjAgMjcuMDMsNzUuMjEgMjcuMDAsNzUuODEgMjYuOTgsNzYuNDEgMjcuMDAsNzcuMDEgMjcuMDQsNzcuNjEgMjcuMTEsNzguMjEgMjcuMjAsNzguODIgMjcuMjksNzkuNDIgMjcuMzcsODAuMDIgMjcuNDMsODAuNjIgMjcuNDUsODEuMjIgMjcuNDUsODEuODIgMjcuNDMsODIuNDMgMjcuMzgsODMuMDMgMjcuMzIsODMuNjMgMjcuMjYsODQuMjMgMjcuMjIsODQuODMgMjcuMTksODUuNDMgMjcuMTcsODYuMDQgMjcuMTYsODYuNjQgMjcuMTUsODcuMjQgMjcuMTIsODcuODQgMjcuMDgsODguNDQgMjcuMDcsODkuMDQgMjcuMDEsODkuNjUgMjYuOTQsOTAuMjUgMjYuODcsOTAuODUgMjYuODIsOTEuNDUgMjYuODEsOTIuMDUgMjYuODcsOTIuOTUgMjcuNzksOTQuMDIgMjguNzUsOTQuMDkgMjkuMjksOTQuMTAgMjkuODMsOTQuMTMgMzAuMzgsOTQuMjAgMzAuOTIsOTQuMzEgMzEuNDQsOTQuNDggMzEuOTUsOTQuNzAgMzIuNDUsOTQuOTUgMzIuOTQsOTUuMjMgMzMuNDEsOTUuNTQgMzMuODYsOTUuODggMzQuMzAsOTYuMjUgMzQuNzAsOTYuNjUgMzUuMDcsOTcuMDkgMzUuNDEsOTcuNTYgMzUuNzIsOTguMDUgMzUuOTksOTguNTcgMzYuMjEsOTkuMTAgMzYuMzgsOTkuNjYgMzYuNTAsMTAwLjIzIDM2LjYxLDEwMC44MCAzNi43MSwxMDEuMzcgMzYuODQsMTAyLjEwIDM3LjU1LDEwMi4xNyAzOC4xNiwxMDIuMTUgMzguNzYsMTAyLjE3IDM5LjM2LDEwMi4yMSAzOS45NiwxMDIuMjYgNDAuNTcsMTAyLjMzIDQxLjE3LDEwMi4zOSA0MS43NywxMDIuNDQgNDIuMzcsMTAyLjQ4IDQyLjk3LDEwMi41MSA0My41NywxMDIuNTMgNDQuMTgsMTAyLjUzIDQ0Ljc4LDEwMi41MSA0NS4zOCwxMDIuNDcgNDUuOTgsMTAyLjQzIDQ2LjU4LDEwMi4zOSA0Ny4xOCwxMDIuMzYgNDcuNzksMTAyLjM0IDQ4LjM5LDEwMi4zMyA0OC45OSwxMDIuMzUgNDkuNTksMTAyLjM4IDUwLjE5LDEwMi40MCA1MC43OSwxMDIuNDIgNTEuNDAsMTAyLjQ0IDUyLjAwLDEwMi40NSA1Mi42MCwxMDIuNDUgNTMuMjAsMTAyLjQyIDUzLjgwLDEwMi4zNyA1NC40MCwxMDIuMzMgNTUuMDEsMTAyLjM1IDU1LjYxLDEwMi4zOSA1Ni4yMSwxMDIuNDUgNTYuODEsMTAyLjUxIDU3LjQxLDEwMi41OCA1OC4wMSwxMDIuNjYgNTguNjEsMTAyLjcyIDU5LjIyLDEwMi43NSA1OS44MiwxMDIuNzUgNjAuNDIsMTAyLjY5IDYxLjAyLDEwMi42MCA2MS42MiwxMDIuNTEgNjIuMjIsMTAyLjQ0IDYyLjgzLDEwMi40MCA2My40MywxMDIuMzggNjQuMDMsMTAyLjM3IDY0LjYzLDEwMi4zNyA2NS4yMywxMDIuNDAgNjUuODMsMTAyLjQ0IDY2LjQ0LDEwMi40OSA2Ny4wNCwxMDIuNTQgNjcuNjQsMTAyLjU3IDY4LjI0LDEwMi41OSA2OC44NCwxMDIuNjAgNjkuNDQsMTAyLjYyIDcwLjA1LDEwMi42NCA3MC42NSwxMDIuNjMgNzEuMjUsMTAyLjYxIDcxLjg1LDEwMi41NiA3Mi40NSwxMDIuNTEgNzMuMDUsMTAyLjQ2IDczLjY2LDEwMi40MSA3NC4yNiwxMDIuMzggNzQuODYsMTAyLjM5IDc1LjQ2LDEwMi40MyA3Ni4wNiwxMDIuNDUgNzYuNjYsMTAyLjQzIDc3LjI3LDEwMi4zOSA3Ny44NywxMDIuMzUgNzguNDcsMTAyLjMxIDc5LjA3LDEwMi4zMCA3OS42NywxMDIuMzEgODAuMjcsMTAyLjMzIDgwLjg4LDEwMi4zNSA4MS40OCwxMDIuMzUgODIuMDgsMTAyLjM0IDgyLjY4LDEwMi4zMiA4My4yOCwxMDIuMzIgODMuODgsMTAyLjM0IDg0LjQ5LDEwMi4zNiA4NS4wOSwxMDIuMzcgODUuNjksMTAyLjM3IDg2LjI5LDEwMi4zOCA4Ni44OSwxMDIuMzkgODcuNDksMTAyLjQwIDg4LjEwLDEwMi40MCA4OC43MCwxMDIuMzggODkuMzAsMTAyLjM3IDg5LjkwLDEwMi4zNSA5MC41MCwxMDIuMzQgOTEuMTAsMTAyLjMyIDkxLjcxLDEwMi4zMCA5Mi4zMSwxMDIuMzEgOTIuOTEsMTAyLjM2IDkzLjUxLDEwMi40MyA5NC4xMSwxMDIuNTEgOTQuNzEsMTAyLjU5IDk1LjMyLDEwMi42NSA5NS45MiwxMDIuNzAgOTYuNTIsMTAyLjc1IDk3LjEyLDEwMi43OCA5Ny43MiwxMDIuODEgOTguMzIsMTAyLjg0IDk4LjkyLDEwMi44OSA5OS41MywxMDIuOTUgMTAwLjEzLDEwMi45OSAxMDAuNzMsMTAzLjAxIDEwMS4zMywxMDMuMDIgMTAxLjkzLDEwMy4wMSAxMDIuNTMsMTAzLjAwIDEwMy4xNCwxMDIuOTcgMTAzLjc0LDEwMi45MyAxMDQuMzQsMTAyLjg3IDEwNC45NCwxMDIuODAgMTA1LjU0LDEwMi43NSAxMDYuMTQsMTAyLjcwIDEwNi43NSwxMDIuNjggMTA3LjM1LDEwMi42OCAxMDcuOTUsMTAyLjcxIDEwOC41NSwxMDIuNzUgMTA5LjE1LDEwMi44MSAxMDkuNzUsMTAyLjg2IDExMC4zNiwxMDIuOTEgMTEwLjk2LDEwMi45NiAxMTEuNTYsMTAyLjk5IDExMi4xNiwxMDMuMDEgMTEyLjc2LDEwMi45OCAxMTMuMzYsMTAyLjkzIDExMy45NywxMDIuODggMTE0LjU3LDEwMi44NSAxMTUuMTcsMTAyLjgzIDExNS43NywxMDIuODEgMTE2LjM3LDEwMi43OCAxMTYuOTcsMTAyLjc1IDExNy41OCwxMDIuNzUgMTE4LjE4LDEwMi43NSAxMTguNzgsMTAyLjc0IDExOS4zOCwxMDIuNzAgMTE5Ljk4LDEwMi42NSAxMjAuNTgsMTAyLjYwIDEyMS4xOSwxMDIuNTYgMTIxLjc5LDEwMi41MiAxMjIuMzksMTAyLjQ3IDEyMi45OSwxMDIuNDMgMTIzLjU5LDEwMi40MCAxMjQuMTksMTAyLjM4IDEyNC44MCwxMDIuMzcgMTI1LjQwLDEwMi4zNSAxMjYuMDAsMTAyLjMzIDEyNi42MCwxMDIuMzAgMTI3LjIwLDEwMi4zMCAxMjcuODAsMTAyLjMxIDEyOC40MSwxMDIuMzMgMTI5LjAxLDEwMi4zMiAxMjkuNjEsMTAyLjMwIDEzMC4yMSwxMDIuMjcgMTMwLjgxLDEwMi4yNyAxMzEuNDEsMTAyLjI5IDEzMi4wMiwxMDIuMzIgMTMyLjYyLDEwMi4zNiAxMzMuMjIsMTAyLjM5IDEzMy44MiwxMDIuNDAgMTM0LjQyLDEwMi40MSAxMzUuMDIsMTAyLjQ0IDEzNS42MywxMDIuNDkgMTM2LjIzLDEwMi41OCAxMzYuODMsMTAyLjY3IDEzNy40MywxMDIuNzYgMTM4LjAzLDEwMi44MiAxMzguNjMsMTAyLjg0IDEzOS4yNCwxMDIuODAgMTM5Ljg0LDEwMi43NCAxNDAuNDQsMTAyLjcxIDE0MS4wNCwxMDIuNzIgMTQxLjY0LDEwMi43NSAxNDIuMjQsMTAyLjc3IDE0Mi44NCwxMDIuNzcgMTQzLjQ1LDEwMi43NCAxNDQuMDUsMTAyLjcxIDE0NC42NSwxMDIuNjggMTQ1LjI1LDEwMi42NCAxNDUuODUsMTAyLjU5IDE0Ni40NSwxMDIuNTQgMTQ3LjA2LDEwMi40OSAxNDcuNjYsMTAyLjQzIDE0OC4yNiwxMDIuMzUgMTQ4Ljg2LDEwMi4yNyAxNDkuNDYsMTAyLjIzIDE1MC4wNiwxMDIuMjUgMTUwLjY3LDEwMi4zMSAxNTEuMjcsMTAyLjQxIDE1MS44NywxMDIuNTMgMTUyLjQ3LDEwMi42NCAxNTMuMDcsMTAyLjczIDE1My42NywxMDIuODAgMTU0LjI4LDEwMi44NCAxNTQuODgsMTAyLjg3IDE1NS40OCwxMDIuODcgMTU2LjA4LDEwMi44NyAxNTYuNjgsMTAyLjg1IDE1Ny4yOCwxMDIuODEgMTU3Ljg5LDEwMi43NyAxNTguNDksMTAyLjcyIDE1OS4wOSwxMDIuNjggMTU5LjY5LDEwMi42NiAxNjAuMjksMTAyLjYzIDE2MC44OSwxMDIuNjAgMTYxLjUwLDEwMi41NCAxNjIuMTAsMTAyLjQ5IDE2Mi44MywxMDIuMzkgMTYzLjMyLDEwMS44MiAxNjMuMzIsMTAxLjEzIDE2My4zNSwxMDAuNTQgMTYzLjQ4LDk5Ljk3IDE2My42OCw5OS40MiAxNjMuOTQsOTguODkgMTY0LjIzLDk4LjM5IDE2NC41Niw5Ny45MiAxNjQuOTIsOTcuNDggMTY1LjMyLDk3LjA4IDE2NS43NCw5Ni43MCAxNjYuMTYsOTYuMzUgMTY2LjU4LDk2LjAxIDE2Ny4wMCw5NS42NyAxNjcuNDEsOTUuMzEgMTY3LjgxLDk0LjkzIDE2OC4yMyw5NC41NCAxNjguNjgsOTQuMTcgMTY5LjE3LDkzLjg0IDE2OS42OSw5My41NyAxNzAuMjQsOTMuMzYgMTcwLjgyLDkzLjIwIDE3MS40MSw5My4xMCAxNzIuMDYsOTMuMDUgMTcyLjA5LDkyLjQwIDE3Mi4xMiw5MS44MCAxNzIuMTUsOTEuMTkgMTcyLjIwLDkwLjU5IDE3Mi4yMyw4OS45OSAxNzIuMjYsODkuMzkgMTcyLjI1LDg4Ljc5IDE3Mi4yMiw4OC4xOSAxNzIuMjAsODcuNTggMTcyLjE5LDg2Ljk4IDE3Mi4yMCw4Ni4zOCAxNzIuMTksODUuNzggMTcyLjIyLDg1LjE4IDE3Mi4yNSw4NC41OCAxNzIuMjcsODMuOTcgMTcyLjI4LDgzLjM3IDE3Mi4yOCw4Mi43NyAxNzIuMzAsODIuMTcgMTcyLjMyLDgxLjU3IDE3Mi40MCw4MC45NyAxNzIuNDksODAuMzYgMTcyLjU3LDc5Ljc2IDE3Mi42NSw3OS4xNiAxNzIuNzMsNzguNTYgMTcyLjc5LDc3Ljk2IDE3Mi44Myw3Ny4zNiAxNzIuODIsNzYuNzUgMTcyLjc5LDc2LjE1IDE3Mi43NCw3NS41NSAxNzIuNjksNzQuOTUgMTcyLjYyLDc0LjM1IDE3Mi41Niw3My43NSAxNzIuNTEsNzMuMTQgMTcyLjUwLDcyLjU0IDE3Mi41MCw3MS45NCAxNzIuNTEsNzEuMzQgMTcyLjUzLDcwLjc0IDE3Mi41Myw3MC4xNCAxNzIuNTIsNjkuNTMgMTcyLjUwLDY4LjkzIDE3Mi40OCw2OC4zMyAxNzIuNDgsNjcuNzMgMTcyLjQ2LDY3LjEzIDE3Mi40NCw2Ni41MyAxNzIuNDMsNjUuOTIgMTcyLjQ0LDY1LjMyIDE3Mi40Nyw2NC43MiAxNzIuNTEsNjQuMTIgMTcyLjU1LDYzLjUyIDE3Mi41Nyw2Mi45MiAxNzIuNjEsNjIuMzEgMTcyLjY1LDYxLjcxIDE3Mi42OSw2MS4xMSAxNzIuNzMsNjAuNTEgMTcyLjc2LDU5LjkxIDE3Mi43OCw1OS4zMSAxNzIuODEsNTguNzAgMTcyLjgzLDU4LjEwIDE3Mi44NSw1Ny41MCAxNzIuODUsNTYuOTAgMTcyLjg1LDU2LjMwIDE3Mi44NCw1NS43MCAxNzIuODUsNTUuMTAgMTcyLjg2LDU0LjQ5IDE3Mi44Nyw1My44OSAxNzIuODcsNTMuMjkgMTcyLjg0LDUyLjY5IDE3Mi44MCw1Mi4wOSAxNzIuNzgsNTEuNDkgMTcyLjc3LDUwLjg4IDE3Mi43Niw1MC4yOCAxNzIuNzMsNDkuNjggMTcyLjY5LDQ5LjA4IDE3Mi42Miw0OC40OCAxNzIuNTQsNDcuODggMTcyLjQ2LDQ3LjI3IDE3Mi40Miw0Ni42NyAxNzIuNDEsNDYuMDcgMTcyLjQ0LDQ1LjQ3IDE3Mi40Niw0NC44NyAxNzIuNDgsNDQuMjcgMTcyLjUyLDQzLjY2IDE3Mi42MCw0My4wNiAxNzIuNjUsNDIuNDYgMTcyLjY1LDQxLjg2IDE3Mi42NSw0MS4yNiAxNzIuNjMsNDAuNjYgMTcyLjU3LDQwLjA1IDE3Mi41MywzOS40NSAxNzIuNTMsMzguODUgMTcyLjU0LDM4LjI1IDE3Mi41NCwzNy42NSAxNzIuNDIsMzYuNjkgMTcxLjUwLDM2LjQ0IDE3MC45MiwzNi4zOSAxNzAuMzYsMzYuMzAgMTY5LjgwLDM2LjE4IDE2OS4yNiwzNi4wMyAxNjguNzIsMzUuODYgMTY4LjE5LDM1LjY0IDE2Ny42OSwzNS4zNSAxNjcuMjMsMzUuMDIgMTY2LjgwLDM0LjY1IDE2Ni40MCwzNC4yNiAxNjYuMDMsMzMuODQgMTY1LjcwLDMzLjM4IDE2NS40NCwzMi44OCAxNjUuMTksMzIuNDAgMTY0Ljk3LDMxLjkwIDE2NC43OSwzMS4zOSAxNjQuNjQsMzAuODggMTY0LjUxLDMwLjM2IDE2NC40MCwyOS44NSAxNjQuMjksMjkuMzQgMTY0LjE4LDI4LjgzIDE2NC4wNCwyOC4wMSAxNjMuMTIsMjcuMDUgMTYyLjE0LDI3LjAyIDE2MS41NCwyNy4wNyAxNjAuOTQsMjcuMTEgMTYwLjM0LDI3LjE1IDE1OS43NCwyNy4yMiAxNTkuMTMsMjcuMjkgMTU4LjUzLDI3LjM1IDE1Ny45MywyNy4zOCAxNTcuMzMsMjcuMzcgMTU2LjczLDI3LjM1IDE1Ni4xMywyNy4zNCAxNTUuNTIsMjcuMzYgMTU0LjkyLDI3LjM5IDE1NC4zMiwyNy40MSAxNTMuNzIsMjcuNDEgMTUzLjEyLDI3LjM5IDE1Mi41MiwyNy4zOCAxNTEuOTEsMjcuMzYgMTUxLjMxLDI3LjMzIDE1MC43MSwyNy4zMCAxNTAuMTEsMjcuMjUgMTQ5LjUxLDI3LjIxIDE0OC45MSwyNy4yMCAxNDguMzAsMjcuMjIgMTQ3LjcwLDI3LjI4IDE0Ny4xMCwyNy4zNSAxNDYuNTAsMjcuNDMgMTQ1LjkwLDI3LjUxIDE0NS4zMCwyNy41OSAxNDQuNjksMjcuNjcgMTQ0LjA5LDI3LjcyIDE0My40OSwyNy43NSAxNDIuODksMjcuNzYgMTQyLjI5LDI3Ljc3IDE0MS42OSwyNy43OCAxNDEuMDgsMjcuNzkgMTQwLjQ4LDI3LjgwIDEzOS44OCwyNy44MSAxMzkuMjgsMjcuODAgMTM4LjY4LDI3Ljc4IDEzOC4wOCwyNy43NCAxMzcuNDcsMjcuNzAgMTM2Ljg3LDI3LjY2IDEzNi4yNywyNy42NCAxMzUuNjcsMjcuNjQgMTM1LjA3LDI3LjY0IDEzNC40NywyNy42NCAxMzMuODYsMjcuNjEgMTMzLjI2LDI3LjU4IDEzMi42NiwyNy41NSAxMzIuMDYsMjcuNTMgMTMxLjQ2LDI3LjU0IDEzMC44NiwyNy41NSAxMzAuMjUsMjcuNTcgMTI5LjY1LDI3LjU3IDEyOS4wNSwyNy41NyAxMjguNDUsMjcuNTggMTI3Ljg1LDI3LjU5IDEyNy4yNSwyNy42MCAxMjYuNjQsMjcuNTkgMTI2LjA0LDI3LjU2IDEyNS40NCwyNy41MiAxMjQuODQsMjcuNDggMTI0LjI0LDI3LjQ0IDEyMy42NCwyNy40MCAxMjMuMDMsMjcuMzYgMTIyLjQzLDI3LjMzIDEyMS44MywyNy4zMSAxMjEuMjMsMjcuMjkgMTIwLjYzLDI3LjI3IDEyMC4wMywyNy4yNyAxMTkuNDMsMjcuMjYgMTE4LjgyLDI3LjI0IDExOC4yMiwyNy4yMiAxMTcuNjIsMjcuMjMgMTE3LjAyLDI3LjMwIDExNi40MiwyNy40MCAxMTUuODIsMjcuNDggMTE1LjIxLDI3LjUxIDExNC42MSwyNy40NyAxMTQuMDEsMjcuNDIgMTEzLjQxLDI3LjM4IDExMi44MSwyNy4zOCAxMTIuMjEsMjcuMzggMTExLjYwLDI3LjM5IDExMS4wMCwyNy40MCAxMTAuNDAsMjcuNDMgMTA5LjgwLDI3LjQ4IDEwOS4yMCwyNy41MiAxMDguNjAsMjcuNTYgMTA3Ljk5LDI3LjYwIDEwNy4zOSwyNy42NCAxMDYuNzksMjcuNjggMTA2LjE5LDI3LjY5IDEwNS41OSwyNy42NyAxMDQuOTksMjcuNjIgMTA0LjM4LDI3LjU1IDEwMy43OCwyNy41MCAxMDMuMTgsMjcuNDYgMTAyLjU4LDI3LjQzIDEwMS45OCwyNy40MSAxMDEuMzgsMjcuNDAgMTAwLjc3LDI3LjQwIDEwMC4xNywyNy40MSA5OS41NywyNy40MyA5OC45NywyNy40NSA5OC4zNywyNy40NiA5Ny43NywyNy40NSA5Ny4xNiwyNy40MyA5Ni41NiwyNy40MyA5NS45NiwyNy40NSA5NS4zNiwyNy41MCA5NC43NiwyNy41NCA5NC4xNiwyNy41NCA5My41NSwyNy40OSA5Mi45NSwyNy40MSA5Mi4zNSwyNy4zMyA5MS43NSwyNy4yNyA5MS4xNSwyNy4yNCA5MC41NSwyNy4yMiA4OS45NCwyNy4yMiA4OS4zNCwyNy4yMiA4OC43NCwyNy4yMiA4OC4xNCwyNy4yMiA4Ny41NCwyNy4yMiA4Ni45NCwyNy4yMiA4Ni4zMywyNy4xOSA4NS43MywyNy4xNSA4NS4xMywyNy4xMSA4NC41MywyNy4xMCA4My45MywyNy4xMiA4My4zMywyNy4xNiA4Mi43MiwyNy4yMSA4Mi4xMiwyNy4yNSA4MS41MiwyNy4yOSA4MC45MiwyNy4zMiA4MC4zMiwyNy4zNSA3OS43MiwyNy4zNiA3OS4xMiwyNy4zNSA3OC41MSwyNy4zMyA3Ny45MSwyNy4zMSA3Ny4zMSwyNy4yOCA3Ni43MSwyNy4yNyA3Ni4xMSwyNy4yNyA3NS41MSwyNy4yOCA3NC45MCwyNy4yOSA3NC4zMCwyNy4zMiA3My43MCwyNy4zOCA3My4xMCwyNy40NiA3Mi41MCwyNy41MiA3MS45MCwyNy41OCA3MS4yOSwyNy42MiA3MC42OSwyNy42NiA3MC4wOSwyNy43MCA2OS40OSwyNy43MSA2OC44OSwyNy43MCA2OC4yOSwyNy42NyA2Ny42OCwyNy42NiA2Ny4wOCwyNy42OSA2Ni40OCwyNy43MyA2NS44OCwyNy43NiA2NS4yOCwyNy43NiA2NC42OCwyNy43MyA2NC4wNywyNy42OSA2My40NywyNy42NiA2Mi44NywyNy42NiA2Mi4yNywyNy42NyA2MS42NywyNy42OSA2MS4wNywyNy43MCA2MC40NiwyNy43MSA1OS44NiwyNy43MCA1OS4yNiwyNy42OCA1OC42NiwyNy42NiA1OC4wNiwyNy42NCA1Ny40NiwyNy42MiA1Ni44NSwyNy42MSA1Ni4yNSwyNy42MSA1NS42NSwyNy42MyA1NS4wNSwyNy42NCA1NC40NSwyNy42NiA1My44NSwyNy42OCA1My4yNCwyNy42OSA1Mi42NCwyNy43MiA1Mi4wNCwyNy43MyA1MS40NCwyNy43MCA1MC44NCwyNy42MyA1MC4yNCwyNy41MyA0OS42MywyNy40MiA0OS4wMywyNy4zMyA0OC40MywyNy4yOSA0Ny44MywyNy4yNyA0Ny4yMywyNy4yOCA0Ni42MywyNy4zMCA0Ni4wMiwyNy4zMyA0NS40MiwyNy4zNyA0NC44MiwyNy40MSA0NC4yMiwyNy40NiA0My42MiwyNy41MSA0My4wMiwyNy41NiA0Mi40MSwyNy42MSA0MS44MSwyNy42NCA0MS4yMSwyNy42NCA0MC42MSwyNy42MSA0MC4wMSwyNy41NiAzOS40MSwyNy41NSAzOC44MCwyNy41OSAzOC4yMCwyNy42NiAzNy42MCwyNy43NCAzNy4wMCwyNy43NyBaIi8+PHBhdGggZmlsbD0iIzUwNzY5MSIgZD0iTSAyNiwyMyBsIDMsMyBsIC0zLDMgbCAtMywtMyB6Ii8+PHBhdGggZmlsbD0iIzUwNzY5MSIgZD0iTSAxNzQsMjMgbCAzLDMgbCAtMywzIGwgLTMsLTMgeiIvPjxwYXRoIGZpbGw9IiM1MDc2OTEiIGQ9Ik0gMjYsMTAxIGwgMywzIGwgLTMsMyBsIC0zLC0zIHoiLz48cGF0aCBmaWxsPSIjNTA3NjkxIiBkPSJNIDE3NCwxMDEgbCAzLDMgbCAtMywzIGwgLTMsLTMgeiIvPjwvc3ZnPg==\");\n  --offstage-i-input-orn-bot: url(\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNDAiIGhlaWdodD0iMzAiIHZpZXdCb3g9IjAgMCAxNDAgMzAiPjxwYXRoIGZpbGw9IiM1MDc2OTEiIGQ9Ik0gMTQuODcsMTAuMzggMTUuNjcsMTAuNjUgMTYuNDYsMTAuOTMgMTcuMjIsMTEuMjcgMTcuOTgsMTEuNjAgMTguNzUsMTEuODkgMTkuNTQsMTIuMDkgMjAuMzEsMTIuMzAgMjEuMDgsMTIuNTIgMjEuODQsMTIuNzQgMjIuNTksMTIuOTQgMjMuMzQsMTMuMTMgMjQuMTAsMTMuMjggMjQuODUsMTMuNDEgMjUuNjAsMTMuNTMgMjYuMzQsMTMuNjQgMjcuMDgsMTMuNzEgMjcuODAsMTMuODMgMjguNTEsMTMuOTggMjkuMjEsMTQuMTIgMjkuOTEsMTQuMjUgMzAuNjEsMTQuMzggMzEuMjksMTQuNTAgMzEuOTcsMTQuNjIgMzIuNjQsMTQuNzggMzMuMjksMTUuMDEgMzMuOTMsMTUuMjggMzQuNTcsMTUuNTUgMzUuMjEsMTUuODAgMzUuODUsMTYuMDIgMzYuNDksMTYuMTcgMzcuMTQsMTYuMjYgMzcuNzgsMTYuMzEgMzguNDIsMTYuMzMgMzkuMDUsMTYuMzIgMzkuNjgsMTYuMjkgNDAuMzAsMTYuMjkgNDAuOTIsMTYuMzAgNDEuNTMsMTYuMzEgNDIuMTMsMTYuMjkgNDIuNzMsMTYuMjIgNDMuMzIsMTYuMTMgNDMuOTAsMTYuMDQgNDQuNDgsMTUuOTYgNDUuMDUsMTUuOTEgNDUuNjIsMTUuOTAgNDYuMTgsMTUuOTAgNDYuNzQsMTUuODcgNDcuMjksMTUuODIgNDcuODQsMTUuNzYgNDguMzgsMTUuNzEgNDguOTIsMTUuNjYgNDkuNDUsMTUuNTkgNDkuOTcsMTUuNDkgNTAuNDksMTUuMzcgNTAuOTksMTUuMjMgNTEuNDksMTUuMDcgNTEuOTcsMTQuOTAgNTIuNDYsMTQuNzMgNTIuOTQsMTQuNTkgNTMuNDIsMTQuNDkgNTMuOTEsMTQuNDAgNTQuNDEsMTQuMzYgNTQuOTEsMTQuMzUgNTUuNDIsMTQuMzMgNTUuOTAsMTQuMjYgNTYuMzcsMTQuMTQgNTYuODMsMTMuOTkgNTcuMjcsMTMuODIgNTcuNzIsMTMuNjUgNTguMTUsMTMuNDYgNTguNTIsMTMuMTQgNTguODYsMTIuNzcgNTkuMTgsMTIuMzggNTkuNTUsMTIuMDkgNTkuOTMsMTEuODcgNTkuNzcsMTEuNTMgNTkuMzgsMTEuNzQgNTguOTgsMTEuOTQgNTguNTUsMTIuMDcgNTguMTMsMTIuMjMgNTcuNzMsMTIuNDMgNTcuMzUsMTIuNzIgNTYuOTUsMTIuOTYgNTYuNTIsMTMuMTAgNTYuMDUsMTMuMTcgNTUuNTYsMTMuMjAgNTUuMDgsMTMuMjQgNTQuNjEsMTMuMzAgNTQuMTQsMTMuMzggNTMuNjcsMTMuNDYgNTMuMjAsMTMuNTcgNTIuNzQsMTMuNzMgNTIuMjgsMTMuOTIgNTEuODIsMTQuMTEgNTEuMzQsMTQuMzAgNTAuODYsMTQuNDkgNTAuMzcsMTQuNjUgNDkuODcsMTQuNzcgNDkuMzUsMTQuODIgNDguODIsMTQuODQgNDguMjksMTQuODUgNDcuNzUsMTQuODIgNDcuMjEsMTQuNzcgNDYuNjYsMTQuNzIgNDYuMTEsMTQuNzEgNDUuNTYsMTQuNzUgNDUuMDEsMTQuODIgNDQuNDUsMTQuOTEgNDMuODksMTQuOTggNDMuMzIsMTUuMDYgNDIuNzQsMTUuMTEgNDIuMTUsMTUuMTUgNDEuNTYsMTUuMTcgNDAuOTYsMTUuMTYgNDAuMzYsMTUuMTMgMzkuNzUsMTUuMTAgMzkuMTQsMTUuMDQgMzguNTMsMTQuOTcgMzcuOTAsMTQuOTMgMzcuMjcsMTQuODkgMzYuNjMsMTQuODYgMzUuOTksMTQuODEgMzUuMzQsMTQuNzQgMzQuNzAsMTQuNjQgMzQuMDQsMTQuNTIgMzMuMzksMTQuMzkgMzIuNzMsMTQuMjUgMzIuMDYsMTQuMDkgMzEuMzksMTMuOTcgMzAuNzEsMTMuODUgMzAuMDIsMTMuNzIgMjkuMzIsMTMuNTkgMjguNjIsMTMuNDUgMjcuOTIsMTMuMzAgMjcuMjIsMTMuMTEgMjYuNTMsMTIuODUgMjUuODIsMTIuNjIgMjUuMTEsMTIuNDAgMjQuMzgsMTIuMTkgMjMuNjUsMTIuMDAgMjIuOTAsMTEuODIgMjIuMTUsMTEuNjQgMjEuMzksMTEuNDQgMjAuNjQsMTEuMjIgMTkuODcsMTEuMDEgMTkuMDksMTAuNzkgMTguMjgsMTAuNjggMTcuNDUsMTAuNTkgMTYuNjEsMTAuNDggMTUuODAsMTAuMjggMTQuOTksMTAuMDIgWiIvPjxwYXRoIGZpbGw9IiM1MDc2OTEiIGQ9Ik0gMTI0Ljk2LDkuODcgMTI0LjE2LDEwLjE3IDEyMy4zNywxMC40MyAxMjIuNTYsMTAuNjEgMTIxLjc1LDEwLjc3IDEyMC45NSwxMC45NCAxMjAuMTksMTEuMjEgMTE5LjQ0LDExLjQ2IDExOC42NywxMS42NyAxMTcuOTAsMTEuODIgMTE3LjEzLDExLjkzIDExNi4zNiwxMi4wNCAxMTUuNjEsMTIuMTcgMTE0Ljg4LDEyLjMzIDExNC4xNSwxMi40OCAxMTMuNDIsMTIuNjIgMTEyLjcwLDEyLjc1IDExMS45OSwxMi45MCAxMTEuMzAsMTMuMDkgMTEwLjYzLDEzLjM0IDEwOS45NiwxMy41OCAxMDkuMjksMTMuODAgMTA4LjYxLDEzLjk3IDEwNy45NCwxNC4xMiAxMDcuMjcsMTQuMjMgMTA2LjYwLDE0LjI5IDEwNS45MywxNC4zMSAxMDUuMjYsMTQuMzAgMTA0LjYwLDE0LjMwIDEwMy45NSwxNC4zMyAxMDMuMzIsMTQuNDAgMTAyLjY5LDE0LjUxIDEwMi4wNywxNC42MyAxMDEuNDYsMTQuNzQgMTAwLjg0LDE0LjgzIDEwMC4yNCwxNC45MSA5OS42MywxNS4wMCA5OS4wMywxNS4wOCA5OC40NCwxNS4xMyA5Ny44NSwxNS4xMSA5Ny4yNiwxNS4wMSA5Ni42OSwxNC44NiA5Ni4xMiwxNC43MCA5NS41NiwxNC41NiA5NS4wMCwxNC41MCA5NC40NSwxNC41MSA5My45MCwxNC41NCA5My4zNSwxNC41NCA5Mi44MSwxNC41MyA5Mi4yOCwxNC41MSA5MS43NSwxNC41MCA5MS4yMiwxNC40OSA5MC43MSwxNC40MiA5MC4yMCwxNC4zMyA4OS42OSwxNC4yNSA4OS4xOSwxNC4xOCA4OC42OSwxNC4xMiA4OC4xOSwxNC4wNiA4Ny43MCwxMy45OSA4Ny4yMSwxMy45MyA4Ni43MywxMy44NiA4Ni4yNSwxMy43OCA4NS43NywxMy43MSA4NS4yOSwxMy42NCA4NC44MiwxMy41NyA4NC4zNCwxMy40OSA4My44OCwxMy4zOSA4My40MywxMy4yNiA4My4wMCwxMy4wOSA4Mi41OSwxMi44NiA4Mi4yMSwxMi41OSA4MS44MCwxMi4zOCA4MS40MSwxMi4xNiA4MS4wMSwxMS45NiA4MC42NCwxMS43MSA4MC4yNiwxMS40OCA4MC4wNywxMS44NSA4MC40NiwxMi4wOCA4MC44MSwxMi4zOCA4MS4xMywxMi43OCA4MS40NiwxMy4yMCA4MS44MCwxMy42MCA4Mi4xOSwxMy44OCA4Mi42MiwxNC4xMSA4My4wNywxNC4yNyA4My41NSwxNC4zOCA4NC4wMywxNC40NyA4NC41MiwxNC41NSA4NS4wMSwxNC42MiA4NS41MCwxNC42OCA4NS45OSwxNC43NyA4Ni40NywxNC45MCA4Ni45NiwxNS4wNSA4Ny40NCwxNS4xOSA4Ny45NCwxNS4zMiA4OC40NSwxNS40MyA4OC45NiwxNS41MyA4OS40NywxNS42MiA5MC4wMCwxNS42OSA5MC41MywxNS43MiA5MS4wNywxNS43MSA5MS42MiwxNS42NyA5Mi4xNywxNS42MSA5Mi43MywxNS41MSA5My4yOSwxNS40MiA5My44NSwxNS4zOCA5NC40MCwxNS40MyA5NC45NiwxNS41NCA5NS41MywxNS42OCA5Ni4xMCwxNS43OSA5Ni42OCwxNS45MCA5Ny4yNywxNS45OSA5Ny44NywxNi4wNyA5OC40NywxNi4xNCA5OS4wOCwxNi4xNSA5OS42OSwxNi4xMSAxMDAuMzAsMTYuMDEgMTAwLjkxLDE1Ljg2IDEwMS41MywxNS43MCAxMDIuMTUsMTUuNTYgMTAyLjc5LDE1LjQ2IDEwMy40MywxNS40MCAxMDQuMDcsMTUuMzcgMTA0LjczLDE1LjM1IDEwNS40MCwxNS4zMyAxMDYuMDcsMTUuMzAgMTA2Ljc1LDE1LjI4IDEwNy40NCwxNS4yNyAxMDguMTMsMTUuMjMgMTA4LjgyLDE1LjE0IDEwOS41MSwxNC45OSAxMTAuMjAsMTQuODMgMTEwLjkwLDE0LjY1IDExMS41OSwxNC40NSAxMTIuMjgsMTQuMjEgMTEyLjk4LDEzLjk1IDExMy42OCwxMy43MCAxMTQuNDEsMTMuNTQgMTE1LjE2LDEzLjQ1IDExNS45MywxMy40MCAxMTYuNzEsMTMuMzMgMTE3LjQ4LDEzLjIxIDExOC4yNSwxMy4wNCAxMTkuMDEsMTIuODQgMTE5Ljc4LDEyLjYxIDEyMC41NSwxMi4zNyAxMjEuMzIsMTIuMTIgMTIyLjA2LDExLjc1IDEyMi44MSwxMS4zNiAxMjMuNTYsMTAuOTcgMTI0LjM0LDEwLjY3IDEyNS4xNCwxMC40MCBaIi8+PHBhdGggZmlsbD0iIzUwNzY5MSIgZD0iTSA3MCw3IGwgMy41LDUgbCAtMy41LDUgbCAtMy41LC01IHoiLz48Y2lyY2xlIGZpbGw9IiM1MDc2OTEiIGN4PSI2IiBjeT0iMTAiIHI9IjEuNCIvPjxjaXJjbGUgZmlsbD0iIzUwNzY5MSIgY3g9IjEzNCIgY3k9IjEwIiByPSIxLjQiLz48L3N2Zz4=\");\n  --offstage-i-input-orn-top: url(\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCAyMDAgNDAiPjxwYXRoIGZpbGw9IiM1MDc2OTEiIGQ9Ik0gMzAuMTksMzAuNTMgMzAuOTQsMzAuMjMgMzEuNjgsMjkuOTAgMzIuNDIsMjkuNjEgMzMuMTYsMjkuMzAgMzMuOTAsMjkuMDIgMzQuNjIsMjguNzEgMzUuMzUsMjguNDMgMzYuMDgsMjguMTUgMzYuODEsMjcuOTIgMzcuNTYsMjcuNzQgMzguMzIsMjcuNjIgMzkuMDksMjcuNTUgMzkuODUsMjcuNDkgNDAuNjEsMjcuNDIgNDEuMzQsMjcuMzIgNDIuMDcsMjcuMTkgNDIuNzksMjcuMDYgNDMuNTEsMjYuOTYgNDQuMjQsMjYuOTAgNDQuOTcsMjYuODggNDUuNzAsMjYuODYgNDYuNDAsMjYuODAgNDcuMDksMjYuNjYgNDcuNzUsMjYuNDIgNDguMzksMjYuMTMgNDkuMDMsMjUuODIgNDkuNjcsMjUuNTQgNTAuMzIsMjUuMzAgNTAuOTgsMjUuMTEgNTEuNjMsMjQuOTcgNTIuMjksMjQuODMgNTIuOTMsMjQuNjUgNTMuNTcsMjQuNDYgNTQuMjEsMjQuMjkgNTQuODUsMjQuMTcgNTUuNDksMjQuMDggNTYuMTQsMjQuMDEgNTYuNzcsMjMuOTQgNTcuNDAsMjMuODUgNTguMDMsMjMuNzQgNTguNjUsMjMuNjYgNTkuMjcsMjMuNjIgNTkuODksMjMuNjIgNjAuNTEsMjMuNjIgNjEuMTIsMjMuNjAgNjEuNzMsMjMuNTQgNjIuMzMsMjMuNDggNjIuOTMsMjMuNDMgNjMuNTIsMjMuMzggNjQuMTEsMjMuMzIgNjQuNzAsMjMuMjYgNjUuMjgsMjMuMjAgNjUuODYsMjMuMTYgNjYuNDQsMjMuMjAgNjcuMDEsMjMuMjkgNjcuNTgsMjMuMzggNjguMTQsMjMuNDYgNjguNzAsMjMuNTIgNjkuMjUsMjMuNTYgNjkuODAsMjMuNTggNzAuMzUsMjMuNjAgNzAuODksMjMuNjQgNzEuNDMsMjMuNzAgNzEuOTYsMjMuNzggNzIuNDksMjMuODggNzMuMDEsMjQuMDAgNzMuNTIsMjQuMTIgNzQuMDQsMjQuMjIgNzQuNTUsMjQuMjggNzUuMDcsMjQuMzAgNzUuNTgsMjQuMjkgNzYuMTAsMjQuMjYgNzYuNjIsMjQuMjIgNzcuMTQsMjQuMTkgNzcuNjQsMjQuMjEgNzguMTMsMjQuMzEgNzguNjEsMjQuNDUgNzkuMDgsMjQuNTkgNzkuNTUsMjQuNzIgODAuMDIsMjQuODIgODAuNDksMjQuOTIgODAuOTYsMjUuMDIgODEuNDIsMjUuMTMgODEuODksMjUuMjIgODIuMzYsMjUuMjggODIuODMsMjUuMzUgODMuMzAsMjUuNDIgODMuNzUsMjUuNTEgODQuMjAsMjUuNjIgODQuNjUsMjUuNzQgODUuMDgsMjUuODggODUuNTMsMjUuOTggODUuOTcsMjYuMDkgODYuNDAsMjYuMjIgODYuODIsMjYuMzkgODcuMjMsMjYuNTcgODcuNjIsMjYuNzggODguMDEsMjYuOTggODguMTIsMjYuNzMgODcuNzIsMjYuNTUgODcuMzIsMjYuMzQgODYuOTUsMjYuMDkgODYuNTcsMjUuODIgODYuMjAsMjUuNTIgODUuODIsMjUuMjIgODUuNDIsMjQuOTYgODQuOTgsMjQuNzggODQuNTMsMjQuNjYgODQuMDYsMjQuNTggODMuNTgsMjQuNTEgODMuMTEsMjQuNDMgODIuNjQsMjQuMzMgODIuMTcsMjQuMjMgODEuNzAsMjQuMTAgODEuMjQsMjMuOTUgODAuNzcsMjMuODAgODAuMzAsMjMuNjUgNzkuODIsMjMuNTEgNzkuMzQsMjMuNDAgNzguODQsMjMuMzIgNzguMzQsMjMuMjQgNzcuODQsMjMuMTYgNzcuMzMsMjMuMTEgNzYuODAsMjMuMTEgNzYuMjgsMjMuMTUgNzUuNzQsMjMuMjMgNzUuMjAsMjMuMzIgNzQuNjcsMjMuMzggNzQuMTQsMjMuMzkgNzMuNjEsMjMuMzUgNzMuMDgsMjMuMzAgNzIuNTUsMjMuMjQgNzIuMDIsMjMuMTUgNzEuNDgsMjMuMDUgNzAuOTQsMjIuOTYgNzAuMzksMjIuODggNjkuODQsMjIuODIgNjkuMjksMjIuNzMgNjguNzMsMjIuNjIgNjguMTYsMjIuNTAgNjcuNTksMjIuNDAgNjcuMDIsMjIuMzUgNjYuNDQsMjIuMzIgNjUuODUsMjIuMzEgNjUuMjcsMjIuMjggNjQuNjcsMjIuMjIgNjQuMDcsMjIuMTYgNjMuNDcsMjIuMTEgNjIuODYsMjIuMDcgNjIuMjUsMjIuMDUgNjEuNjQsMjIuMDQgNjEuMDIsMjIuMDUgNjAuNDAsMjIuMTAgNTkuNzcsMjIuMTcgNTkuMTUsMjIuMjQgNTguNTIsMjIuMjkgNTcuODcsMjIuMjkgNTcuMjMsMjIuMjkgNTYuNTgsMjIuMzMgNTUuOTQsMjIuNDMgNTUuMzAsMjIuNTggNTQuNjYsMjIuNzYgNTQuMDEsMjIuOTQgNTMuMzYsMjMuMDcgNTIuNzAsMjMuMTggNTIuMDMsMjMuMjggNTEuMzYsMjMuMzkgNTAuNzAsMjMuNTggNTAuMDUsMjMuODQgNDkuNDAsMjQuMTQgNDguNzYsMjQuNDMgNDguMTAsMjQuNjkgNDcuNDMsMjQuOTEgNDYuNzQsMjUuMDkgNDYuMDUsMjUuMjUgNDUuMzYsMjUuNDMgNDQuNjcsMjUuNjIgNDMuOTcsMjUuNzkgNDMuMjYsMjUuOTMgNDIuNTMsMjYuMDUgNDEuODEsMjYuMjAgNDEuMTAsMjYuNDIgNDAuMzksMjYuNjMgMzkuNjYsMjYuODAgMzguOTEsMjYuOTIgMzguMTQsMjcuMDIgMzcuMzYsMjcuMDkgMzYuNTgsMjcuMTYgMzUuODAsMjcuMjcgMzUuMDUsMjcuNDcgMzQuMzIsMjcuNzggMzMuNjEsMjguMTUgMzIuOTIsMjguNTkgMzIuMjIsMjkuMDIgMzEuNTMsMjkuNDcgMzAuODAsMjkuODIgMzAuMDQsMzAuMTIgWiIvPjxwYXRoIGZpbGw9IiM1MDc2OTEiIGQ9Ik0gMTcwLjEwLDI5LjcyIDE2OS4zMywyOS40NiAxNjguNTcsMjkuMTggMTY3Ljg0LDI4LjgzIDE2Ny4xMiwyOC40OCAxNjYuMzksMjguMTQgMTY1LjYzLDI3LjkzIDE2NC44OCwyNy43MSAxNjQuMTQsMjcuNDUgMTYzLjQyLDI3LjE3IDE2Mi42OSwyNi45MCAxNjEuOTYsMjYuNjYgMTYxLjIzLDI2LjQ0IDE2MC41MCwyNi4yNCAxNTkuNzcsMjYuMDUgMTU5LjA1LDI1Ljg2IDE1OC4zNCwyNS42NCAxNTcuNjQsMjUuMzggMTU2Ljk1LDI1LjExIDE1Ni4yNiwyNC44NSAxNTUuNTcsMjQuNjIgMTU0Ljg3LDI0LjQxIDE1NC4xOCwyNC4yMiAxNTMuNDgsMjQuMDUgMTUyLjgwLDIzLjg2IDE1Mi4xMiwyMy42NiAxNTEuNDQsMjMuNDggMTUwLjc1LDIzLjMzIDE1MC4wNiwyMy4yNCAxNDkuMzcsMjMuMTcgMTQ4LjcwLDIzLjA4IDE0OC4wMywyMi45NCAxNDcuMzcsMjIuNzkgMTQ2LjcxLDIyLjY2IDE0Ni4wNCwyMi41NyAxNDUuMzgsMjIuNTQgMTQ0LjcxLDIyLjUzIDE0NC4wNSwyMi41MSAxNDMuNDAsMjIuNDcgMTQyLjc1LDIyLjQ1IDE0Mi4xMSwyMi40NyAxNDEuNDYsMjIuNTIgMTQwLjgyLDIyLjU5IDE0MC4xOCwyMi42OCAxMzkuNTUsMjIuNzUgMTM4LjkzLDIyLjc4IDEzOC4zMiwyMi43NiAxMzcuNzEsMjIuNzMgMTM3LjExLDIyLjcyIDEzNi41MSwyMi43NCAxMzUuOTEsMjIuNzggMTM1LjMxLDIyLjgyIDEzNC43MywyMi44NyAxMzQuMTQsMjIuODkgMTMzLjU2LDIyLjg2IDEzMi45OSwyMi43OSAxMzIuNDEsMjIuNjkgMTMxLjg0LDIyLjU5IDEzMS4yNywyMi40OCAxMzAuNzAsMjIuNDAgMTMwLjE0LDIyLjM1IDEyOS41OCwyMi4zMyAxMjkuMDIsMjIuMzAgMTI4LjQ2LDIyLjI4IDEyNy45MSwyMi4yNiAxMjcuMzYsMjIuMjYgMTI2LjgyLDIyLjI3IDEyNi4yNywyMi4zMCAxMjUuNzQsMjIuMzQgMTI1LjIxLDIyLjQ0IDEyNC43MCwyMi41NyAxMjQuMTksMjIuNzIgMTIzLjY4LDIyLjg3IDEyMy4xOCwyMy4wNCAxMjIuNjksMjMuMTkgMTIyLjE5LDIzLjMzIDEyMS42OSwyMy40MSAxMjEuMTgsMjMuNDIgMTIwLjY3LDIzLjQyIDEyMC4xNiwyMy40MiAxMTkuNjYsMjMuNDcgMTE5LjE3LDIzLjU1IDExOC42OSwyMy42NyAxMTguMjIsMjMuODAgMTE3Ljc2LDIzLjk3IDExNy4zMSwyNC4xNCAxMTYuODYsMjQuMzIgMTE2LjQxLDI0LjQ4IDExNS45NSwyNC42MSAxMTUuNTAsMjQuNzQgMTE1LjA1LDI0Ljg4IDExNC42MiwyNS4wNSAxMTQuMjAsMjUuMjYgMTEzLjc5LDI1LjQ4IDExMy40MiwyNS43OCAxMTMuMDQsMjYuMDYgMTEyLjY3LDI2LjMzIDExMi4yNywyNi41MyAxMTEuODcsMjYuNzIgMTEyLjAxLDI3LjAxIDExMi40MCwyNi44MyAxMTIuODIsMjYuNjcgMTEzLjI2LDI2LjU4IDExMy43MSwyNi41MCAxMTQuMTcsMjYuNDUgMTE0LjYxLDI2LjMzIDExNS4wNCwyNi4yMSAxMTUuNDcsMjYuMDggMTE1Ljg5LDI1LjkwIDExNi4zMSwyNS43MCAxMTYuNzQsMjUuNTIgMTE3LjE4LDI1LjM3IDExNy42MywyNS4yNSAxMTguMDksMjUuMTQgMTE4LjU1LDI1LjA0IDExOS4wMywyNC45NyAxMTkuNTEsMjQuOTUgMTIwLjAxLDI0Ljk2IDEyMC41MSwyNC45NiAxMjEuMDAsMjQuOTMgMTIxLjQ4LDI0Ljg3IDEyMS45NiwyNC43OCAxMjIuNDUsMjQuNjggMTIyLjkzLDI0LjU3IDEyMy40MiwyNC40NCAxMjMuOTAsMjQuMjkgMTI0LjM5LDI0LjEzIDEyNC44OSwyNC4wMCAxMjUuNDAsMjMuODkgMTI1LjkxLDIzLjgwIDEyNi40MywyMy43NCAxMjYuOTYsMjMuNjkgMTI3LjQ5LDIzLjY2IDEyOC4wMiwyMy42MyAxMjguNTYsMjMuNjAgMTI5LjEwLDIzLjU1IDEyOS42NCwyMy41MCAxMzAuMTksMjMuNDMgMTMwLjc0LDIzLjQwIDEzMS4zMCwyMy40MCAxMzEuODYsMjMuNDMgMTMyLjQyLDIzLjQ4IDEzMi45OSwyMy41NCAxMzMuNTYsMjMuNTkgMTM0LjE0LDIzLjYyIDEzNC43MSwyMy42NiAxMzUuMjksMjMuNzAgMTM1Ljg4LDIzLjc1IDEzNi40NiwyMy44MCAxMzcuMDYsMjMuODMgMTM3LjY1LDIzLjg0IDEzOC4yNSwyMy44NyAxMzguODYsMjMuOTIgMTM5LjQ2LDIzLjk2IDE0MC4wOCwyMy45NyAxNDAuNzAsMjMuOTYgMTQxLjMyLDIzLjkzIDE0MS45NiwyMy44OSAxNDIuNTksMjMuODkgMTQzLjIzLDIzLjk0IDE0My44NiwyNC4wNCAxNDQuNDksMjQuMTYgMTQ1LjEzLDI0LjI4IDE0NS43OCwyNC4zOCAxNDYuNDMsMjQuNDMgMTQ3LjEwLDI0LjQ1IDE0Ny43NywyNC40OSAxNDguNDQsMjQuNTcgMTQ5LjA5LDI0LjcyIDE0OS43NSwyNC45MSAxNTAuNDEsMjUuMTAgMTUxLjA4LDI1LjI0IDE1MS43NywyNS4zNSAxNTIuNDYsMjUuNDYgMTUzLjE1LDI1LjU4IDE1My44NCwyNS43MyAxNTQuNTIsMjUuOTMgMTU1LjIwLDI2LjE1IDE1NS44OCwyNi40MCAxNTYuNTcsMjYuNjMgMTU3LjI3LDI2LjgzIDE1Ny45NywyNy4wMiAxNTguNjgsMjcuMjEgMTU5LjM5LDI3LjQzIDE2MC4xMCwyNy42NiAxNjAuODEsMjcuODkgMTYxLjUzLDI4LjEyIDE2Mi4yNiwyOC4zMyAxNjMuMDAsMjguNTMgMTYzLjc0LDI4LjczIDE2NC40OSwyOC45MiAxNjUuMjQsMjkuMTQgMTY2LjAwLDI5LjM1IDE2Ni44MCwyOS40MyAxNjcuNjEsMjkuNTAgMTY4LjQzLDI5LjYwIDE2OS4yMSwyOS44MCAxNjkuOTgsMzAuMDYgWiIvPjxwYXRoIGZpbGw9IiM1MDc2OTEiIGZpbGwtcnVsZT0iZXZlbm9kZCIgZD0iTSA5OS44NiwxNi4wMyAxMDAuMDIsMTYuODMgMTAwLjE3LDE3LjYwIDEwMC4zMywxOC4zNSAxMDAuNTEsMTkuMDcgMTAwLjcyLDE5Ljc2IDEwMC45NCwyMC40MyAxMDEuMTgsMjEuMDYgMTAxLjQ0LDIxLjY2IDEwMS43MCwyMi4yMyAxMDEuOTYsMjIuODAgMTAyLjIyLDIzLjM0IDEwMi40OCwyMy44NyAxMDIuNzMsMjQuNDAgMTAzLjAyLDI0LjkwIDEwMy4zNiwyNS4zNSAxMDMuNzcsMjUuNzIgMTA0LjIxLDI2LjA0IDEwNC42NiwyNi4zMiAxMDQuNzksMjYuMjIgMTA0LjgwLDI1LjYxIDEwNC40NSwyNS44NCAxMDQuMDQsMjYuMTcgMTAzLjY0LDI2LjU0IDEwMy4yNCwyNi45MiAxMDIuODUsMjcuMzMgMTAyLjQ5LDI3Ljc4IDEwMi4xNywyOC4yNyAxMDEuODcsMjguODAgMTAxLjU3LDI5LjM0IDEwMS4yOCwyOS45MSAxMDEuMDEsMzAuNTAgMTAwLjc2LDMxLjEzIDEwMC41MywzMS43OSAxMDAuMzIsMzIuNDggMTAwLjE1LDMzLjIwIDEwMC4wMCwzMy45NSA5OS44MywzNC43MSA5OS42NSwzNS4zOSAxMDAuNDAsMzUuMzcgMTAwLjMwLDM0LjY4IDEwMC4wOCwzMy45MiA5OS44MiwzMy4yMSA5OS41NCwzMi41MyA5OS4yOCwzMS44NiA5OS4wMiwzMS4yMiA5OC43MywzMC42MiA5OC40MywzMC4wNSA5OC4xMywyOS41MCA5Ny44NywyOC45NiA5Ny42MSwyOC40MiA5Ny4zMiwyNy45MiA5Ni45NiwyNy40OSA5Ni41NSwyNy4xMSA5Ni4xMywyNi43OCA5NS43MiwyNi40NiA5NS4zMiwyNi4xNSA5NC45NSwyNS45MCA5NC44NSwyNi4wOCA5NS4xMSwyNS45OSA5NS41MSwyNS42OSA5NS45MSwyNS4zNiA5Ni4yOSwyNS4wMSA5Ni42NiwyNC42MiA5Ny4wMCwyNC4xOSA5Ny4zMywyMy43MyA5Ny42NCwyMy4yNSA5Ny45NSwyMi43NCA5OC4yMywyMi4yMCA5OC41MSwyMS42MyA5OC43OSwyMS4wNCA5OS4wOCwyMC40MyA5OS4zNywxOS44MCA5OS42MywxOS4xMiA5OS44MywxOC40MCAxMDAuMDMsMTcuNjYgMTAwLjIxLDE2Ljg5IDEwMC4zOSwxNi4wOSBaIE0gOTkuMjAsMTUuODIgOTkuMDMsMTYuNjAgOTguODksMTcuMzUgOTguNzQsMTguMDggOTguNTgsMTguNzggOTguNDUsMTkuNDcgOTguMzIsMjAuMTMgOTguMTQsMjAuNzYgOTcuOTAsMjEuMzQgOTcuNjMsMjEuODggOTcuMzMsMjIuMzggOTcuMDMsMjIuODYgOTYuNzMsMjMuMzEgOTYuNDAsMjMuNzIgOTYuMDcsMjQuMTAgOTUuNzQsMjQuNDYgOTUuNDAsMjQuNzkgOTUuMDUsMjUuMTEgOTQuNzAsMjUuMzkgOTQuMTgsMjUuODEgOTQuNDksMjYuNDMgOTQuOTEsMjYuNzEgOTUuMjgsMjYuOTkgOTUuNjEsMjcuMzMgOTUuOTAsMjcuNzIgOTYuMTgsMjguMTQgOTYuNDcsMjguNTYgOTYuODAsMjguOTcgOTcuMTQsMjkuNDEgOTcuNDUsMjkuODggOTcuNzAsMzAuNDIgOTcuOTQsMzAuOTggOTguMTYsMzEuNTggOTguMzgsMzIuMjAgOTguNTcsMzIuODYgOTguNzEsMzMuNTUgOTguODQsMzQuMjcgOTkuMDAsMzUuMDEgOTkuMjcsMzUuOTAgMTAwLjY4LDM1Ljg4IDEwMC44NiwzNC45NyAxMDEuMDQsMzQuMjQgMTAxLjI2LDMzLjU0IDEwMS40OCwzMi44NyAxMDEuNzAsMzIuMjMgMTAxLjkzLDMxLjYyIDEwMi4xOCwzMS4wNCAxMDIuNDYsMzAuNTAgMTAyLjczLDI5Ljk4IDEwMy4wMywyOS41MSAxMDMuMzUsMjkuMDcgMTAzLjY2LDI4LjY2IDEwMy45NywyOC4yNiAxMDQuMjgsMjcuODkgMTA0LjYwLDI3LjU1IDEwNC45MiwyNy4yMyAxMDUuMjUsMjYuOTIgMTA1LjYzLDI2LjU3IDEwNS45MSwyNS43OCAxMDUuMzIsMjUuMzYgMTA0Ljk0LDI1LjExIDEwNC41OSwyNC44MCAxMDQuMjUsMjQuNDcgMTAzLjkyLDI0LjExIDEwMy41OSwyMy43MyAxMDMuMjcsMjMuMzEgMTAzLjAwLDIyLjg0IDEwMi43NiwyMi4zMyAxMDIuNTEsMjEuODEgMTAyLjI2LDIxLjI3IDEwMi4wMCwyMC43MCAxMDEuNzYsMjAuMTAgMTAxLjU0LDE5LjQ3IDEwMS4zMywxOC44MSAxMDEuMTMsMTguMTIgMTAwLjkyLDE3LjQwIDEwMC43MiwxNi42NiAxMDAuNTMsMTUuODggWiIvPjxjaXJjbGUgZmlsbD0iIzUwNzY5MSIgY3g9IjIwIiBjeT0iMzAiIHI9IjEuNiIvPjxjaXJjbGUgZmlsbD0iIzUwNzY5MSIgY3g9IjE4MCIgY3k9IjMwIiByPSIxLjYiLz48L3N2Zz4=\");\n  --offstage-icon-bg: rgba(147,182,202,.08);\n  --offstage-line: rgba(147,182,202,.14);\n  --offstage-muted: #5f7f92;\n  --offstage-on-ink: #f6dcb0;\n  --offstage-page: #0d1b23;\n  --offstage-panel-bg: #0a161d;\n  --offstage-panel-ink: #a9c2d1;\n  --offstage-pen: #b39672;\n  --offstage-pen-hi: #f6dcb0;\n  --offstage-pop-shadow: 0 14px 40px rgba(0,0,0,.55);\n  --offstage-scroll: rgba(147,182,202,.22);\n  --offstage-title: #d7e7f1;\n  --offstage-veil-card: rgba(5,11,15,.8);\n}\nhtml[data-offstage-palette=\"light\"] :is(.kulisy-panel, .kulisy-tab, .kulisy-topbtn, [data-kulisy-note]) {\n  --offstage-active-bg: rgba(122,90,60,.1);\n  --offstage-bg: var(--offstage-i-bg-vignette) 0 0 / 100% 100% no-repeat, var(--offstage-i-bg-tile) 0 0 / 146px 146px repeat, var(--offstage-page);\n  --offstage-ctl-bg: rgba(255,252,246,.6);\n  --offstage-ctl-line: rgba(90,63,44,.3);\n  --offstage-ctl-line-hi: rgba(90,63,44,.6);\n  --offstage-field: #f8f4ec;\n  --offstage-field-bg: #fbf8f2;\n  --offstage-field-ink: #2b231c;\n  --offstage-focus-line: rgba(90,63,44,.6);\n  --offstage-gold: #7a5a3c;\n  --offstage-hint: #6f5e4a;\n  --offstage-i-bg-tile: url(\"data:image/webp;base64,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NzI5YTI4AAAAA5RqdW1iAAAAKWp1bWRjMmFzABEAEIAAAKoAOJtxA2MycGEuYXNzZXJ0aW9ucwAAAAC5anVtYgAAAERqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmluZ3JlZGllbnQudjMAAAAAGGMyc2hAiU+jPF6N2991Sm7Ho1/cAAAAbWNib3KjaWRjOmZvcm1hdGppbWFnZS93ZWJwamluc3RhbmNlSUR4LHhtcDppaWQ6YjkxODA5NDAtMDgwMy00MTk2LTk1YTgtMDM0MTE4ZjMzOTFjbHJlbGF0aW9uc2hpcGhwYXJlbnRPZgAAAeJqdW1iAAAAQWp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuYWN0aW9ucy52MgAAAAAYYzJzaMhDk9yNVSbb5RFgnWgGmjgAAAGZY2JvcqJnYWN0aW9uc4KiZmFjdGlvbmtjMnBhLm9wZW5lZGpwYXJhbWV0ZXJzoWtpbmdyZWRpZW50c4GiY3VybHgtc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5pbmdyZWRpZW50LnYzZGhhc2hYIEWyfIQzqFUSL/T111B7ev2cLFNW/OhX7sbBN385PTX3pGZhY3Rpb254HWNvbS5hbnRocm9waWMuY2xhdWRlLnByb3ZpZGVkanBhcmFtZXRlcnOheB9jb20uYW50aHJvcGljLm9yaWdpbi1jb25maWRlbmNlZ3Vua25vd25rZGVzY3JpcHRpb254ZkNsYXVkZSBwcm92aWRlZCB0aGlzIGZpbGUgYXQgdGhlIHJlcXVlc3Qgb2YgYSB1c2VyIGFuZCBtYXkgaGF2ZSBjcmVhdGVkIG9yIG1vZGlmaWVkIHRoZSBmaWxlIGNvbnRlbnRzLm1zb2Z0d2FyZUFnZW50oWRuYW1lZkNsYXVkZXJhbGxBY3Rpb25zSW5jbHVkZWT1AAAAyGp1bWIAAABAanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5oYXNoLmRhdGEAAAAAGGMyc2jvD0e6K6ahJaBCHLMhAFGFAAAAgGNib3KlY2FsZ2ZzaGEyNTZjcGFkTAAAAAAAAAAAAAAAAGRoYXNoWCDOy9zFErylqQ8g+g/ssAKsXQutPsDV/9UHEveT+T6Qp2RuYW1lbmp1bWJmIG1hbmlmZXN0amV4Y2x1c2lvbnOBomVzdGFydBktPmZsZW5ndGgZFocAAAI+anVtYgAAACdqdW1kYzJjbAARABCAAACqADibcQNjMnBhLmNsYWltLnYyAAAAAg9jYm9ypWNhbGdmc2hhMjU2aXNpZ25hdHVyZXhNc2VsZiNqdW1iZj0vYzJwYS91cm46YzJwYTo2NmI0MTAzZS0xOWUxLTQ0ZTMtODkyYS1iMWQ0MzA3MjlhMjgvYzJwYS5zaWduYXR1cmVqaW5zdGFuY2VJRHgseG1wOmlpZDo2YmVkZmIwOC04MTE4LTQ3NGEtYjE0YS1hMjYxOGRhMTJkYWFyY3JlYXRlZF9hc3NlcnRpb25zg6JjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggRbJ8hDOoVRIv9PXXUHt6/ZwsU1b86FfuxsE3fzk9NfeiY3VybHgqc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5hY3Rpb25zLnYyZGhhc2hYIKj+OdBPxWeDUoL2WsumjugZBLnMx263iGvfZSl4r5XEomN1cmx4KXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaGFzaC5kYXRhZGhhc2hYIEsqu7or75PLvfIUyZeZbq6/y9X+RvVojlaAJKPvBZ0gdGNsYWltX2dlbmVyYXRvcl9pbmZvo2RuYW1lb0FudGhyb3BpYyBGaWxlc2d2ZXJzaW9uZTEuMC4wa3NwZWNWZXJzaW9uZTIuNC4wAAAQOGp1bWIAAAAoanVtZGMyY3MAEQAQgAAAqgA4m3EDYzJwYS5zaWduYXR1cmUAAAAQCGNib3LShFkCEqIBJhghWQIKMIICBjCCAY2gAwIBAgIUQOWgCu7COdC+uIP6BkIFPWdVEwAwCgYIKoZIzj0EAwMwSTEXMBUGA1UEChMOQW50aHJvcGljLCBQQkMxLjAsBgNVBAMTJUFudGhyb3BpYyBDb250ZW50IENyZWRlbnRpYWxzIFJvb3QgQ0EwHhcNMjYwODA3MTg0MzU2WhcNMjgwODA2MTk0MzU2WjBEMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEpMCcGA1UEAxMgQW50aHJvcGljIENsYXVkZSBDb250ZW50IFNpZ25pbmcwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASYegpry1AYBRTVNL1CpTlbROnY3dey+UrsF9C3phYrATN3ZHf93Mo8RQN0KOUuOn19P4oWNFWe5n2/She9N7eTo1gwVjAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lBA4wDAYKKwYBBAGD6F4CATAMBgNVHRMBAf8EAjAAMB8GA1UdIwQYMBaAFM5R4gSBTmRbI/jjxM+aPpzB11zCMAoGCCqGSM49BAMDA2cAMGQCMDFzHRSeAXrSy1WOzkbhPZ6Km2wGTmZ/2gK18k8BQGXyqz88Rdrz6CTX9flAnYNVxgIwcF9c3fVhqmJKpi+UhasNUMko69cyX6STPfta3Q8EjyzDjzoyrol46FP6VFHhvUcJoWNwYWRZDZ4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2WEByIjYJQ/faAR82QW/fFh20qn/j/bqAV+UePRoGlUKGRLuYPAqy+m1g7gNi4YC7F3n+WopLlRp3e6tD/11ANVfTAA==\");\n  --offstage-i-bg-vignette: url(\"data:image/webp;base64,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tW3YQuv71WrC7/7mUc7D+a0yHcgDfHC/+b9O3DMlwhygKCZNpY4f6ATPJNStAeOsIRkTSRWklDxVoJoCQzJQQX8WAAAAABZ/anVtYgAAAB5qdW1kYzJwYQARABCAAACqADibcQNjMnBhAAAAFllqdW1iAAAAR2p1bWRjMm1hABEAEIAAAKoAOJtxA3VybjpjMnBhOmUwOWMyZTQxLWZiNDQtNGFkNi1hNTFjLWQzNzBmOTM5NWQyNQAAAAOUanVtYgAAAClqdW1kYzJhcwARABCAAACqADibcQNjMnBhLmFzc2VydGlvbnMAAAAAuWp1bWIAAABEanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5pbmdyZWRpZW50LnYzAAAAABhjMnNo67VzTzW1NippL89RIsunpQAAAG1jYm9yo2lkYzpmb3JtYXRqaW1hZ2Uvd2VicGppbnN0YW5jZUlEeCx4bXA6aWlkOjZlNGRhMGQ4LTkwNWUtNGQ4Yi05YzBiLTk4N2VkNWI0YzZjY2xyZWxhdGlvbnNoaXBocGFyZW50T2YAAAHianVtYgAAAEFqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmFjdGlvbnMudjIAAAAAGGMyc2jd2SssAKMLuct+XxjUapOLAAABmWNib3KiZ2FjdGlvbnOComZhY3Rpb25rYzJwYS5vcGVuZWRqcGFyYW1ldGVyc6FraW5ncmVkaWVudHOBomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCCx+r7aFwhLQKqarmLJHMpusW7gMWE/Z/gjjow32Nw9X6RmYWN0aW9ueB1jb20uYW50aHJvcGljLmNsYXVkZS5wcm92aWRlZGpwYXJhbWV0ZXJzoXgfY29tLmFudGhyb3BpYy5vcmlnaW4tY29uZmlkZW5jZWd1bmtub3dua2Rlc2NyaXB0aW9ueGZDbGF1ZGUgcHJvdmlkZWQgdGhpcyBmaWxlIGF0IHRoZSByZXF1ZXN0IG9mIGEgdXNlciBhbmQgbWF5IGhhdmUgY3JlYXRlZCBvciBtb2RpZmllZCB0aGUgZmlsZSBjb250ZW50cy5tc29mdHdhcmVBZ2VudKFkbmFtZWZDbGF1ZGVyYWxsQWN0aW9uc0luY2x1ZGVk9QAAAMhqdW1iAAAAQGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaGFzaC5kYXRhAAAAABhjMnNopW6qccv2kCbfUKeflVj+1gAAAIBjYm9ypWNhbGdmc2hhMjU2Y3BhZEwAAAAAAAAAAAAAAABkaGFzaFgg07LMjFXTiy5AH74OvIAw8QpPzw+tVGOHWed8Geltf0BkbmFtZW5qdW1iZiBtYW5pZmVzdGpleGNsdXNpb25zgaJlc3RhcnQZglBmbGVuZ3RoGRaHAAACPmp1bWIAAAAnanVtZGMyY2wAEQAQgAAAqgA4m3EDYzJwYS5jbGFpbS52MgAAAAIPY2JvcqVjYWxnZnNoYTI1NmlzaWduYXR1cmV4TXNlbGYjanVtYmY9L2MycGEvdXJuOmMycGE6ZTA5YzJlNDEtZmI0NC00YWQ2LWE1MWMtZDM3MGY5Mzk1ZDI1L2MycGEuc2lnbmF0dXJlamluc3RhbmNlSUR4LHhtcDppaWQ6ZjViODBhNmYtYmU4MC00ZTcwLTk3M2YtZjdiOTg5Yjc4NzkycmNyZWF0ZWRfYXNzZXJ0aW9uc4OiY3VybHgtc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5pbmdyZWRpZW50LnYzZGhhc2hYILH6vtoXCEtAqpquYskcym6xbuAxYT9n+COOjDfY3D1fomN1cmx4KnNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuYWN0aW9ucy52MmRoYXNoWCB1SVloHUf6f0jgW0zTUD+n/2lSEW1+M4ZRp6CqdQHGw6JjdXJseClzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmhhc2guZGF0YWRoYXNoWCBWiSUWdZAKwy3mcXbP98cwS9g3ki/GLQL9/zHmnmR0yHRjbGFpbV9nZW5lcmF0b3JfaW5mb6NkbmFtZW9BbnRocm9waWMgRmlsZXNndmVyc2lvbmUxLjAuMGtzcGVjVmVyc2lvbmUyLjQuMAAAEDhqdW1iAAAAKGp1bWRjMmNzABEAEIAAAKoAOJtxA2MycGEuc2lnbmF0dXJlAAAAEAhjYm9y0oRZAhKiASYYIVkCCjCCAgYwggGNoAMCAQICFEDloAruwjnQvriD+gZCBT1nVRMAMAoGCCqGSM49BAMDMEkxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMS4wLAYDVQQDEyVBbnRocm9waWMgQ29udGVudCBDcmVkZW50aWFscyBSb290IENBMB4XDTI2MDgwNzE4NDM1NloXDTI4MDgwNjE5NDM1NlowRDEXMBUGA1UEChMOQW50aHJvcGljLCBQQkMxKTAnBgNVBAMTIEFudGhyb3BpYyBDbGF1ZGUgQ29udGVudCBTaWduaW5nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmHoKa8tQGAUU1TS9QqU5W0Tp2N3XsvlK7BfQt6YWKwEzd2R3/dzKPEUDdCjlLjp9fT+KFjRVnuZ9v0oXvTe3k6NYMFYwDgYDVR0PAQH/BAQDAgeAMBUGA1UdJQQOMAwGCisGAQQBg+heAgEwDAYDVR0TAQH/BAIwADAfBgNVHSMEGDAWgBTOUeIEgU5kWyP448TPmj6cwddcwjAKBggqhkjOPQQDAwNnADBkAjAxcx0UngF60stVjs5G4T2eiptsBk5mf9oCtfJPAUBl8qs/PEXa8+gk1/X5QJ2DVcYCMHBfXN31YapiSqYvlIWrDVDJKOvXMl+kkz37Wt0PBI8sw486Mq6JeOhT+lRR4b1HCaFjcGFkWQ2eAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9lhAk2GRIIuWdQsNEcV2V/8LZQfTfyTA0MWuAhnLEI5EiCRLUqzgLBE/Rg2C6K+PsdrRoPHDK1sRm2dJ1toRwjfPeAA=\");\n  --offstage-i-input-frame: url(\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMTMwIiB2aWV3Qm94PSIwIDAgMjAwIDEzMCI+PHBhdGggZmlsbD0iIzVhM2YyYyIgZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNIDM1LjAwLDIzLjYyIDM1LjYwLDIzLjYzIDM2LjIwLDIzLjY0IDM2LjgwLDIzLjY0IDM3LjQwLDIzLjU4IDM4LjAxLDIzLjUzIDM4LjYxLDIzLjUxIDM5LjIxLDIzLjQ4IDM5LjgxLDIzLjQyIDQwLjQxLDIzLjMwIDQxLjAxLDIzLjE0IDQxLjYxLDIyLjk5IDQyLjIxLDIyLjkwIDQyLjgxLDIyLjg2IDQzLjQyLDIyLjg1IDQ0LjAyLDIyLjg0IDQ0LjYyLDIyLjg2IDQ1LjIyLDIyLjkwIDQ1LjgyLDIyLjk2IDQ2LjQyLDIyLjk5IDQ3LjAyLDIyLjk3IDQ3LjYyLDIyLjkzIDQ4LjIzLDIyLjg5IDQ4LjgzLDIyLjg0IDQ5LjQzLDIyLjc4IDUwLjAzLDIyLjcxIDUwLjYzLDIyLjY0IDUxLjIzLDIyLjYyIDUxLjgzLDIyLjY3IDUyLjQzLDIyLjgwIDUzLjAzLDIyLjk4IDUzLjY0LDIzLjE2IDU0LjI0LDIzLjI5IDU0Ljg0LDIzLjMyIDU1LjQ0LDIzLjI2IDU2LjA0LDIzLjE5IDU2LjY0LDIzLjE0IDU3LjI0LDIzLjE1IDU3Ljg0LDIzLjE2IDU4LjQ0LDIzLjEyIDU5LjA1LDIzLjAwIDU5LjY1LDIyLjg3IDYwLjI1LDIyLjc0IDYwLjg1LDIyLjYzIDYxLjQ1LDIyLjU1IDYyLjA1LDIyLjUxIDYyLjY1LDIyLjUyIDYzLjI1LDIyLjU2IDYzLjg2LDIyLjY0IDY0LjQ2LDIyLjc1IDY1LjA2LDIyLjg2IDY1LjY2LDIyLjk1IDY2LjI2LDIyLjk5IDY2Ljg2LDIyLjk3IDY3LjQ2LDIyLjkzIDY4LjA2LDIyLjkxIDY4LjY2LDIyLjkxIDY5LjI3LDIyLjk2IDY5Ljg3LDIzLjAzIDcwLjQ3LDIzLjA5IDcxLjA3LDIzLjEwIDcxLjY3LDIzLjA3IDcyLjI3LDIzLjAyIDcyLjg3LDIzLjAyIDczLjQ3LDIzLjA2IDc0LjA3LDIzLjEyIDc0LjY4LDIzLjE4IDc1LjI4LDIzLjIyIDc1Ljg4LDIzLjIzIDc2LjQ4LDIzLjE5IDc3LjA4LDIzLjEzIDc3LjY4LDIzLjA5IDc4LjI4LDIzLjA5IDc4Ljg4LDIzLjEwIDc5LjQ4LDIzLjEwIDgwLjA5LDIzLjEwIDgwLjY5LDIzLjExIDgxLjI5LDIzLjE0IDgxLjg5LDIzLjE3IDgyLjQ5LDIzLjE5IDgzLjA5LDIzLjE2IDgzLjY5LDIzLjEwIDg0LjI5LDIzLjAyIDg0LjkwLDIyLjk2IDg1LjUwLDIyLjk0IDg2LjEwLDIyLjkzIDg2LjcwLDIyLjkzIDg3LjMwLDIyLjkxIDg3LjkwLDIyLjg4IDg4LjUwLDIyLjg0IDg5LjEwLDIyLjc4IDg5LjcwLDIyLjcyIDkwLjMxLDIyLjY4IDkwLjkxLDIyLjY2IDkxLjUxLDIyLjY0IDkyLjExLDIyLjYyIDkyLjcxLDIyLjYwIDkzLjMxLDIyLjYyIDkzLjkxLDIyLjY1IDk0LjUxLDIyLjY3IDk1LjExLDIyLjcwIDk1LjcyLDIyLjc2IDk2LjMyLDIyLjgxIDk2LjkyLDIyLjg0IDk3LjUyLDIyLjc5IDk4LjEyLDIyLjY4IDk4LjcyLDIyLjU3IDk5LjMyLDIyLjU1IDk5LjkyLDIyLjY1IDEwMC41MywyMi44MCAxMDEuMTMsMjIuOTYgMTAxLjczLDIzLjA3IDEwMi4zMywyMy4xOCAxMDIuOTMsMjMuMjggMTAzLjUzLDIzLjM1IDEwNC4xMywyMy4zNSAxMDQuNzMsMjMuMzEgMTA1LjMzLDIzLjI1IDEwNS45NCwyMy4xNSAxMDYuNTQsMjMuMDMgMTA3LjE0LDIyLjkxIDEwNy43NCwyMi44MCAxMDguMzQsMjIuNzEgMTA4Ljk0LDIyLjY2IDEwOS41NCwyMi41NyAxMTAuMTQsMjIuNDYgMTEwLjc0LDIyLjM4IDExMS4zNSwyMi4zOSAxMTEuOTUsMjIuNDcgMTEyLjU1LDIyLjU2IDExMy4xNSwyMi42NCAxMTMuNzUsMjIuNjkgMTE0LjM1LDIyLjc3IDExNC45NSwyMi44NCAxMTUuNTUsMjIuOTAgMTE2LjE1LDIyLjkxIDExNi43NiwyMi45MSAxMTcuMzYsMjIuOTEgMTE3Ljk2LDIyLjkwIDExOC41NiwyMi44OSAxMTkuMTYsMjIuODcgMTE5Ljc2LDIyLjg1IDEyMC4zNiwyMi44NSAxMjAuOTYsMjIuODggMTIxLjU3LDIyLjkxIDEyMi4xNywyMi45NSAxMjIuNzcsMjIuOTggMTIzLjM3LDIzLjAyIDEyMy45NywyMy4wNCAxMjQuNTcsMjMuMDYgMTI1LjE3LDIzLjA3IDEyNS43NywyMy4wNyAxMjYuMzcsMjMuMDQgMTI2Ljk4LDIyLjk4IDEyNy41OCwyMi45NCAxMjguMTgsMjIuOTIgMTI4Ljc4LDIyLjkzIDEyOS4zOCwyMi45NSAxMjkuOTgsMjIuOTQgMTMwLjU4LDIyLjkyIDEzMS4xOCwyMi45MSAxMzEuNzgsMjIuOTMgMTMyLjM5LDIyLjk1IDEzMi45OSwyMi45NCAxMzMuNTksMjIuOTIgMTM0LjE5LDIyLjg5IDEzNC43OSwyMi44NyAxMzUuMzksMjIuODkgMTM1Ljk5LDIyLjkzIDEzNi41OSwyMi45NyAxMzcuMjAsMjIuOTcgMTM3LjgwLDIyLjg3IDEzOC40MCwyMi42NiAxMzkuMDAsMjIuNDcgMTM5LjYwLDIyLjQ0IDE0MC4yMCwyMi40MiAxNDAuODAsMjIuNDEgMTQxLjQwLDIyLjQzIDE0Mi4wMCwyMi40OSAxNDIuNjEsMjIuNTIgMTQzLjIxLDIyLjYzIDE0My44MSwyMi43NiAxNDQuNDEsMjIuODcgMTQ1LjAxLDIyLjkzIDE0NS42MSwyMi45OCAxNDYuMjEsMjMuMDMgMTQ2LjgxLDIzLjEwIDE0Ny40MSwyMy4xOCAxNDguMDIsMjMuMjggMTQ4LjYyLDIzLjM1IDE0OS4yMiwyMy40MCAxNDkuODIsMjMuNDAgMTUwLjQyLDIzLjM1IDE1MS4wMiwyMy4yOCAxNTEuNjIsMjMuMjMgMTUyLjIyLDIzLjE4IDE1Mi44MiwyMy4xMCAxNTMuNDMsMjMuMDMgMTU0LjAzLDIzLjAwIDE1NC42MywyMy4wMCAxNTUuMjMsMjMuMDIgMTU1LjgzLDIzLjAzIDE1Ni40MywyMy4wMiAxNTcuMDMsMjMuMDQgMTU3LjYzLDIzLjA5IDE1OC4yNCwyMy4xMiAxNTguODQsMjMuMDkgMTU5LjQ0LDIyLjk0IDE2MC4wNCwyMi43MiAxNjAuNjQsMjIuNTMgMTYxLjI0LDIyLjQzIDE2MS44NCwyMi40MyAxNjIuNDQsMjIuNDcgMTYzLjA0LDIyLjU0IDE2My42NSwyMi42MSAxNjQuMjUsMjIuNjYgMTY0LjQ5LDIyLjYxIDE2NC4yNywyMi41OSAxNjQuMjMsMjMuMTIgMTY0LjIwLDIzLjc2IDE2NC4yMiwyNC40MSAxNjQuMjksMjUuMDYgMTY0LjQyLDI1LjcwIDE2NC41NywyNi4zMyAxNjQuNzMsMjYuOTcgMTY0LjkyLDI3LjYwIDE2NS4xNCwyOC4yMiAxNjUuMzgsMjguODUgMTY1LjY0LDI5LjQ3IDE2NS45NSwzMC4wNiAxNjYuMzQsMzAuNjEgMTY2LjgyLDMxLjA4IDE2Ny4zNiwzMS40OSAxNjcuOTEsMzEuODcgMTY4LjQ1LDMyLjI1IDE2OC45NSwzMi42NiAxNjkuNDQsMzMuMDggMTY5Ljk2LDMzLjQ4IDE3MC41MSwzMy44MSAxNzEuMDksMzQuMTAgMTcxLjY4LDM0LjM3IDE3Mi4yNiwzNC42MyAxNzIuODUsMzQuODkgMTczLjQ1LDM1LjExIDE3NC4wNywzNS4yOCAxNzQuNjksMzUuNDQgMTc1LjMxLDM1LjU5IDE3NS45NSwzNS42OSAxNzYuNTgsMzUuNzcgMTc3LjIxLDM1LjkwIDE3Ny4yOSwzNS44NyAxNzYuODEsMzUuNjIgMTc2LjY1LDM2LjA3IDE3Ni40OSwzNi42NyAxNzYuMzIsMzcuMjcgMTc2LjE0LDM3Ljg3IDE3Ni4wMCwzOC40NyAxNzUuOTYsMzkuMDcgMTc2LjAyLDM5LjY4IDE3Ni4wOCw0MC4yOCAxNzYuMTcsNDAuODggMTc2LjMxLDQxLjQ4IDE3Ni41Miw0Mi4wOCAxNzYuNzgsNDIuNjggMTc3LjAwLDQzLjI4IDE3Ny4xMiw0My44OCAxNzcuMTcsNDQuNDggMTc3LjI2LDQ1LjA5IDE3Ny4zNyw0NS42OSAxNzcuNDYsNDYuMjkgMTc3LjUxLDQ2Ljg5IDE3Ny41Myw0Ny40OSAxNzcuNTQsNDguMDkgMTc3LjU1LDQ4LjY5IDE3Ny41Niw0OS4yOSAxNzcuNTYsNDkuOTAgMTc3LjUzLDUwLjUwIDE3Ny40OCw1MS4xMCAxNzcuNDEsNTEuNzAgMTc3LjM1LDUyLjMwIDE3Ny4zMCw1Mi45MCAxNzcuMjUsNTMuNTAgMTc3LjIyLDU0LjEwIDE3Ny4yMyw1NC43MCAxNzcuMjEsNTUuMzEgMTc3LjE0LDU1LjkxIDE3Ni45OSw1Ni41MSAxNzYuODAsNTcuMTEgMTc2LjYwLDU3LjcxIDE3Ni40OCw1OC4zMSAxNzYuMzksNTguOTEgMTc2LjMyLDU5LjUxIDE3Ni4yOSw2MC4xMSAxNzYuMzAsNjAuNzIgMTc2LjM0LDYxLjMyIDE3Ni4zOSw2MS45MiAxNzYuNDQsNjIuNTIgMTc2LjQ4LDYzLjEyIDE3Ni41Miw2My43MiAxNzYuNTYsNjQuMzIgMTc2LjU5LDY0LjkyIDE3Ni42NCw2NS41MyAxNzYuNzQsNjYuMTMgMTc2LjkxLDY2LjczIDE3Ny4xMCw2Ny4zMyAxNzcuMjgsNjcuOTMgMTc3LjQzLDY4LjUzIDE3Ny41Niw2OS4xMyAxNzcuNjUsNjkuNzMgMTc3LjY4LDcwLjMzIDE3Ny42NSw3MC45NCAxNzcuNTgsNzEuNTQgMTc3LjQ5LDcyLjE0IDE3Ny40MSw3Mi43NCAxNzcuMzUsNzMuMzQgMTc3LjMxLDczLjk0IDE3Ny4yOCw3NC41NCAxNzcuMjQsNzUuMTQgMTc3LjE5LDc1Ljc0IDE3Ny4xNiw3Ni4zNSAxNzcuMTMsNzYuOTUgMTc3LjExLDc3LjU1IDE3Ny4xMiw3OC4xNSAxNzcuMTQsNzguNzUgMTc3LjE1LDc5LjM1IDE3Ny4xMyw3OS45NSAxNzcuMDYsODAuNTUgMTc2Ljk3LDgxLjE1IDE3Ni45MSw4MS43NiAxNzYuOTIsODIuMzYgMTc3LjAwLDgyLjk2IDE3Ny4xMCw4My41NiAxNzcuMTYsODQuMTYgMTc3LjEzLDg0Ljc2IDE3Ny4wMyw4NS4zNiAxNzYuOTAsODUuOTYgMTc2Ljc3LDg2LjU3IDE3Ni43MSw4Ny4xNyAxNzYuNjgsODcuNzcgMTc2LjY3LDg4LjM3IDE3Ni42Nyw4OC45NyAxNzYuNzAsODkuNTcgMTc2Ljc2LDkwLjE3IDE3Ni44MCw5MC43NyAxNzYuODIsOTEuMzcgMTc2LjgxLDkxLjk4IDE3Ni43OCw5Mi41OCAxNzYuNzIsOTMuMTggMTc2LjYzLDkzLjc4IDE3Ni41NSw5NC4zOCAxNzYuOTAsOTMuOTcgMTc3LjMzLDkzLjUxIDE3Ni42OCw5My41NSAxNzYuMDIsOTMuNjQgMTc1LjM3LDkzLjgxIDE3NC43Myw5NC4wMyAxNzQuMTEsOTQuMjggMTczLjUxLDk0LjU2IDE3Mi45Miw5NC44NiAxNzIuMzQsOTUuMTYgMTcxLjc3LDk1LjQ2IDE3MS4yMCw5NS43NiAxNzAuNjIsOTYuMDYgMTcwLjA0LDk2LjM1IDE2OS40NSw5Ni42NiAxNjguODcsOTYuOTkgMTY4LjMyLDk3LjM3IDE2Ny43OSw5Ny43NyAxNjcuMjcsOTguMjEgMTY2Ljc3LDk4LjY2IDE2Ni4yOSw5OS4xNSAxNjUuODcsOTkuNjggMTY1LjUwLDEwMC4yNSAxNjUuMTksMTAwLjg1IDE2NC45MiwxMDEuNDggMTY0LjY5LDEwMi4xMSAxNjQuNDksMTAyLjc2IDE2NC4zMiwxMDMuNDEgMTY0LjE5LDEwNC4wNyAxNjQuMDksMTA0LjcyIDE2NC4wMCwxMDUuMzggMTYzLjg3LDEwNi4wMyAxNjMuNzEsMTA2LjY3IDE2My41NSwxMDcuMzMgMTYzLjkwLDEwNi44NyAxNjQuNDAsMTA2LjM1IDE2My44MCwxMDYuMzIgMTYzLjIwLDEwNi4zMSAxNjIuNjAsMTA2LjI5IDE2MS45OSwxMDYuMjcgMTYxLjM5LDEwNi4yNCAxNjAuNzksMTA2LjIzIDE2MC4xOSwxMDYuMjQgMTU5LjU5LDEwNi4yNSAxNTguOTksMTA2LjIzIDE1OC4zOSwxMDYuMjEgMTU3Ljc5LDEwNi4yMSAxNTcuMTksMTA2LjIyIDE1Ni41OCwxMDYuMjIgMTU1Ljk4LDEwNi4yOCAxNTUuMzgsMTA2LjM4IDE1NC43OCwxMDYuNTYgMTU0LjE4LDEwNi43OCAxNTMuNTgsMTA2Ljk5IDE1Mi45OCwxMDcuMTQgMTUyLjM4LDEwNy4yMiAxNTEuNzcsMTA3LjI0IDE1MS4xNywxMDcuMjIgMTUwLjU3LDEwNy4yMiAxNDkuOTcsMTA3LjIzIDE0OS4zNywxMDcuMjMgMTQ4Ljc3LDEwNy4yMyAxNDguMTcsMTA3LjE5IDE0Ny41NywxMDcuMDkgMTQ2Ljk3LDEwNi45NSAxNDYuMzYsMTA2Ljg1IDE0NS43NiwxMDYuODAgMTQ1LjE2LDEwNi43NyAxNDQuNTYsMTA2LjczIDE0My45NiwxMDYuNjcgMTQzLjM2LDEwNi42MCAxNDIuNzYsMTA2LjU0IDE0Mi4xNiwxMDYuNDkgMTQxLjU2LDEwNi40NyAxNDAuOTUsMTA2LjQ3IDE0MC4zNSwxMDYuNTQgMTM5Ljc1LDEwNi42NyAxMzkuMTUsMTA2LjgwIDEzOC41NSwxMDYuODkgMTM3Ljk1LDEwNi45NyAxMzcuMzUsMTA3LjAzIDEzNi43NSwxMDcuMDYgMTM2LjE0LDEwNy4wNCAxMzUuNTQsMTA2Ljk2IDEzNC45NCwxMDYuODUgMTM0LjM0LDEwNi43NCAxMzMuNzQsMTA2LjY1IDEzMy4xNCwxMDYuNTkgMTMyLjU0LDEwNi41NSAxMzEuOTQsMTA2LjUyIDEzMS4zNCwxMDYuNDkgMTMwLjczLDEwNi40OSAxMzAuMTMsMTA2LjUxIDEyOS41MywxMDYuNTIgMTI4LjkzLDEwNi41MSAxMjguMzMsMTA2LjQ2IDEyNy43MywxMDYuNDEgMTI3LjEzLDEwNi4zNyAxMjYuNTMsMTA2LjM4IDEyNS45MywxMDYuNDUgMTI1LjMyLDEwNi41NCAxMjQuNzIsMTA2LjYyIDEyNC4xMiwxMDYuNjggMTIzLjUyLDEwNi43OSAxMjIuOTIsMTA2LjkyIDEyMi4zMiwxMDcuMDcgMTIxLjcyLDEwNy4xOSAxMjEuMTIsMTA3LjI4IDEyMC41MiwxMDcuMzQgMTE5LjkxLDEwNy40MCAxMTkuMzEsMTA3LjQ1IDExOC43MSwxMDcuNTEgMTE4LjExLDEwNy41NiAxMTcuNTEsMTA3LjU5IDExNi45MSwxMDcuNTkgMTE2LjMxLDEwNy41NiAxMTUuNzEsMTA3LjUxIDExNS4xMCwxMDcuNDggMTE0LjUwLDEwNy40OCAxMTMuOTAsMTA3LjUyIDExMy4zMCwxMDcuNTYgMTEyLjcwLDEwNy42MCAxMTIuMTAsMTA3LjYwIDExMS41MCwxMDcuNTkgMTEwLjkwLDEwNy41OCAxMTAuMzAsMTA3LjU4IDEwOS42OSwxMDcuNjIgMTA5LjA5LDEwNy42OSAxMDguNDksMTA3Ljc0IDEwNy44OSwxMDcuNzAgMTA3LjI5LDEwNy41NSAxMDYuNjksMTA3LjI5IDEwNi4wOSwxMDcuMDIgMTA1LjQ5LDEwNi44MyAxMDQuODksMTA2LjczIDEwNC4yOCwxMDYuNjggMTAzLjY4LDEwNi42NyAxMDMuMDgsMTA2LjY0IDEwMi40OCwxMDYuNjQgMTAxLjg4LDEwNi42NyAxMDEuMjgsMTA2LjcyIDEwMC42OCwxMDYuNzQgMTAwLjA4LDEwNi43MSA5OS40NywxMDYuNjcgOTguODcsMTA2LjYzIDk4LjI3LDEwNi42MiA5Ny42NywxMDYuNTkgOTcuMDcsMTA2LjU0IDk2LjQ3LDEwNi40OCA5NS44NywxMDYuNDUgOTUuMjcsMTA2LjQ1IDk0LjY3LDEwNi40NiA5NC4wNiwxMDYuNDkgOTMuNDYsMTA2LjU0IDkyLjg2LDEwNi42MiA5Mi4yNiwxMDYuNzIgOTEuNjYsMTA2LjgyIDkxLjA2LDEwNi44OCA5MC40NiwxMDYuOTEgODkuODYsMTA2LjkwIDg5LjI2LDEwNi44OCA4OC42NSwxMDYuODYgODguMDUsMTA2LjgyIDg3LjQ1LDEwNi43NiA4Ni44NSwxMDYuNjkgODYuMjUsMTA2LjYzIDg1LjY1LDEwNi42MiA4NS4wNSwxMDYuNjUgODQuNDUsMTA2LjY3IDgzLjg1LDEwNi42NCA4My4yNCwxMDYuNjEgODIuNjQsMTA2LjYxIDgyLjA0LDEwNi42NCA4MS40NCwxMDYuNjggODAuODQsMTA2LjcxIDgwLjI0LDEwNi43NSA3OS42NCwxMDYuODEgNzkuMDQsMTA2Ljg4IDc4LjQzLDEwNi45MiA3Ny44MywxMDYuOTIgNzcuMjMsMTA2LjkzIDc2LjYzLDEwNi45NSA3Ni4wMywxMDYuOTUgNzUuNDMsMTA2LjkzIDc0LjgzLDEwNi44OSA3NC4yMywxMDYuODcgNzMuNjMsMTA2Ljg3IDczLjAyLDEwNi44OCA3Mi40MiwxMDYuODcgNzEuODIsMTA2LjgzIDcxLjIyLDEwNi43NSA3MC42MiwxMDYuNjYgNzAuMDIsMTA2LjYxIDY5LjQyLDEwNi42MCA2OC44MiwxMDYuNjEgNjguMjIsMTA2LjYzIDY3LjYxLDEwNi42NCA2Ny4wMSwxMDYuNjQgNjYuNDEsMTA2LjY3IDY1LjgxLDEwNi43NCA2NS4yMSwxMDYuNzkgNjQuNjEsMTA2LjgzIDY0LjAxLDEwNi44OCA2My40MSwxMDYuOTMgNjIuODAsMTA2Ljk2IDYyLjIwLDEwNi45NSA2MS42MCwxMDYuOTMgNjEuMDAsMTA2Ljg4IDYwLjQwLDEwNi43OSA1OS44MCwxMDYuNjcgNTkuMjAsMTA2LjUyIDU4LjYwLDEwNi4zNiA1OC4wMCwxMDYuMjQgNTcuMzksMTA2LjEzIDU2Ljc5LDEwNi4wMiA1Ni4xOSwxMDUuOTUgNTUuNTksMTA1Ljk0IDU0Ljk5LDEwNS45NyA1NC4zOSwxMDYuMDMgNTMuNzksMTA2LjA5IDUzLjE5LDEwNi4xMyA1Mi41OSwxMDYuMjAgNTEuOTgsMTA2LjMyIDUxLjM4LDEwNi40NCA1MC43OCwxMDYuNTAgNTAuMTgsMTA2LjQ4IDQ5LjU4LDEwNi40NCA0OC45OCwxMDYuMzkgNDguMzgsMTA2LjMzIDQ3Ljc4LDEwNi4yNCA0Ny4xOCwxMDYuMTAgNDYuNTcsMTA1Ljk5IDQ1Ljk3LDEwNS45NCA0NS4zNywxMDUuOTcgNDQuNzcsMTA2LjA2IDQ0LjE3LDEwNi4xOSA0My41NywxMDYuMzIgNDIuOTcsMTA2LjQ4IDQyLjM3LDEwNi42NyA0MS43NiwxMDYuODMgNDEuMTYsMTA2LjkzIDQwLjU2LDEwNi45NCAzOS45NiwxMDYuODcgMzkuMzYsMTA2LjgyIDM4Ljc2LDEwNi44MiAzOC4xNiwxMDYuODIgMzcuNTYsMTA2LjgyIDM2Ljk2LDEwNi44MSAzNi4zNSwxMDYuODMgMzUuNzUsMTA2Ljg2IDM1LjcxLDEwNy4wNSAzNi4wNSwxMDcuMzYgMzYuMDAsMTA2Ljg3IDM1Ljg4LDEwNi4yMyAzNS43MSwxMDUuNjAgMzUuNTEsMTA0Ljk5IDM1LjMxLDEwNC4zOCAzNS4xMiwxMDMuNzcgMzQuOTQsMTAzLjE2IDM0LjcyLDEwMi41NSAzNC40NCwxMDEuOTggMzQuMDQsMTAxLjQ3IDMzLjU3LDEwMS4wMiAzMy4wOCwxMDAuNTkgMzIuNjEsMTAwLjE3IDMyLjE0LDk5Ljc3IDMxLjY2LDk5LjM5IDMxLjIwLDk5LjAwIDMwLjc2LDk4LjYwIDMwLjMzLDk4LjE5IDI5LjkwLDk3Ljc3IDI5LjQ3LDk3LjM0IDI5LjA1LDk2Ljg5IDI4LjY0LDk2LjM4IDI4LjIxLDk1Ljg2IDI3LjcyLDk1LjQwIDI3LjE2LDk1LjA4IDI2LjU3LDk0LjgzIDI1Ljk3LDk0LjU5IDI1LjM2LDk0LjM2IDI0Ljc0LDk0LjE1IDI0LjEwLDk0LjAzIDIzLjQ1LDkzLjk1IDIyLjgwLDkzLjg3IDIyLjgyLDkzLjk3IDIzLjMzLDk0LjM3IDIzLjQxLDkzLjkzIDIzLjQ0LDkzLjMzIDIzLjQzLDkyLjczIDIzLjQxLDkyLjEzIDIzLjM3LDkxLjUzIDIzLjMzLDkwLjkzIDIzLjMwLDkwLjMyIDIzLjI5LDg5LjcyIDIzLjMwLDg5LjEyIDIzLjMxLDg4LjUyIDIzLjI3LDg3LjkyIDIzLjIyLDg3LjMyIDIzLjE1LDg2LjcyIDIzLjA3LDg2LjEyIDIyLjk4LDg1LjUyIDIyLjg5LDg0LjkxIDIyLjgxLDg0LjMxIDIyLjc3LDgzLjcxIDIyLjc4LDgzLjExIDIyLjgyLDgyLjUxIDIyLjkxLDgxLjkxIDIzLjA0LDgxLjMxIDIzLjIwLDgwLjcxIDIzLjMzLDgwLjEwIDIzLjQ0LDc5LjUwIDIzLjUxLDc4LjkwIDIzLjUzLDc4LjMwIDIzLjQ3LDc3LjcwIDIzLjQwLDc3LjEwIDIzLjMxLDc2LjUwIDIzLjIwLDc1LjkwIDIzLjA1LDc1LjMwIDIyLjkwLDc0LjY5IDIyLjgwLDc0LjA5IDIyLjgwLDczLjQ5IDIyLjg4LDcyLjg5IDIyLjk5LDcyLjI5IDIzLjA0LDcxLjY5IDIzLjAxLDcxLjA5IDIyLjk2LDcwLjQ5IDIyLjkwLDY5Ljg5IDIyLjg1LDY5LjI4IDIyLjgyLDY4LjY4IDIyLjgxLDY4LjA4IDIyLjc5LDY3LjQ4IDIyLjc1LDY2Ljg4IDIyLjcwLDY2LjI4IDIyLjY1LDY1LjY4IDIyLjYxLDY1LjA4IDIyLjU4LDY0LjQ3IDIyLjU1LDYzLjg3IDIyLjUyLDYzLjI3IDIyLjQ5LDYyLjY3IDIyLjQ5LDYyLjA3IDIyLjUzLDYxLjQ3IDIyLjU5LDYwLjg3IDIyLjY1LDYwLjI3IDIyLjY5LDU5LjY3IDIyLjc2LDU5LjA2IDIyLjgzLDU4LjQ2IDIyLjkwLDU3Ljg2IDIyLjkzLDU3LjI2IDIyLjk0LDU2LjY2IDIyLjk1LDU2LjA2IDIyLjk2LDU1LjQ2IDIzLjAwLDU0Ljg2IDIzLjAxLDU0LjI2IDIzLjAxLDUzLjY1IDIzLjAyLDUzLjA1IDIzLjA2LDUyLjQ1IDIzLjEwLDUxLjg1IDIzLjEyLDUxLjI1IDIzLjA5LDUwLjY1IDIzLjA0LDUwLjA1IDIyLjk5LDQ5LjQ1IDIyLjk2LDQ4Ljg1IDIyLjkxLDQ4LjI0IDIyLjgzLDQ3LjY0IDIyLjc2LDQ3LjA0IDIyLjcxLDQ2LjQ0IDIyLjcxLDQ1Ljg0IDIyLjc1LDQ1LjI0IDIyLjgwLDQ0LjY0IDIyLjg3LDQ0LjA0IDIyLjk0LDQzLjQzIDIzLjAwLDQyLjgzIDIzLjA0LDQyLjIzIDIzLjA1LDQxLjYzIDIzLjA0LDQxLjAzIDIzLjA0LDQwLjQzIDIzLjA2LDM5LjgzIDIzLjA4LDM5LjIzIDIzLjA5LDM4LjYzIDIzLjA2LDM4LjAyIDIyLjk5LDM3LjQyIDIyLjkxLDM2LjgyIDIyLjg0LDM2LjIyIDIyLjgyLDM1LjYyIDIyLjY1LDM1LjYyIDIyLjY0LDM1Ljk5IDIzLjI4LDM2LjA1IDIzLjkzLDM2LjAwIDI0LjU3LDM1LjgzIDI1LjE4LDM1LjYxIDI1LjgwLDM1LjQxIDI2LjQyLDM1LjI0IDI3LjAzLDM1LjAzIDI3LjYyLDM0Ljc3IDI4LjE5LDM0LjQ2IDI4Ljc1LDM0LjE1IDI5LjMzLDMzLjg2IDI5LjkwLDMzLjU2IDMwLjQ1LDMzLjIxIDMwLjk0LDMyLjc5IDMxLjQwLDMyLjMzIDMxLjg2LDMxLjg3IDMyLjM1LDMxLjQ1IDMyLjg3LDMxLjA0IDMzLjM2LDMwLjU5IDMzLjg0LDMwLjEyIDM0LjMyLDI5LjYzIDM0LjgwLDI5LjE0IDM1LjI4LDI4LjYyIDM1LjcxLDI4LjA2IDM2LjA1LDI3LjQ1IDM2LjI4LDI2Ljc5IDM2LjQwLDI2LjEwIDM2LjQ3LDI1LjQxIDM2LjU2LDI0LjcyIDM2LjcyLDI0LjA1IDM2LjkxLDIzLjM4IDM2Ljk0LDIyLjY5IDM2Ljk0LDIyLjA0IFogTSAzMy40MiwyMS45NiAzMy40MiwyMi41MyAzMy40MywyMy4wNiAzMy41NiwyMy42MSAzMy42MiwyNC4xNyAzMy41NiwyNC43MiAzMy40MSwyNS4yNSAzMy4yNCwyNS43NyAzMy4xMCwyNi4zMCAzMi45NywyNi44NSAzMi44MCwyNy4zOCAzMi41NSwyNy44OCAzMi4yMSwyOC4zMyAzMS44MSwyOC43MiAzMS4zNiwyOS4wNyAzMC45MSwyOS40MSAzMC41MCwyOS43NiAzMC4wOSwzMC4xMCAyOS42OSwzMC40NCAyOS4zMSwzMC44MSAyOC45NiwzMS4yNCAyOC42NiwzMS43NCAyOC4zNSwzMi4yNyAyNy45OSwzMi43OSAyNy41NywzMy4yMSAyNy4wOSwzMy41NiAyNi41OCwzMy44NSAyNi4wMywzNC4wNiAyNS40NSwzNC4xOSAyNC44NSwzNC4xOCAyNC4yNCwzNC4wNiAyMy42NSwzMy45MyAyMy4wOCwzMy44NSAyMi41MSwzMy44NCAyMS4xNiwzNC4yNSAyMC44OCwzNS42MiAyMC44NSwzNi4yMiAyMC44MCwzNi44MiAyMC43NCwzNy40MiAyMC43MCwzOC4wMiAyMC43MCwzOC42MyAyMC43MywzOS4yMyAyMC43OCwzOS44MyAyMC44Miw0MC40MyAyMC44Miw0MS4wMyAyMC43OSw0MS42MyAyMC43Miw0Mi4yMyAyMC42NCw0Mi44MyAyMC41NSw0My40MyAyMC40Nyw0NC4wNCAyMC4zOSw0NC42NCAyMC4zMyw0NS4yNCAyMC4yOCw0NS44NCAyMC4yNSw0Ni40NCAyMC4yNSw0Ny4wNCAyMC4zMSw0Ny42NCAyMC40MSw0OC4yNCAyMC41OCw0OC44NSAyMC43Nyw0OS40NSAyMC45NCw1MC4wNSAyMS4wNSw1MC42NSAyMS4xNCw1MS4yNSAyMS4xOSw1MS44NSAyMS4yMSw1Mi40NSAyMS4yMSw1My4wNSAyMS4xNiw1My42NSAyMS4xMCw1NC4yNiAyMS4wNiw1NC44NiAyMS4wMyw1NS40NiAyMS4wMCw1Ni4wNiAyMC45OCw1Ni42NiAyMC45OSw1Ny4yNiAyMS4wMSw1Ny44NiAyMS4wNSw1OC40NiAyMS4xMCw1OS4wNiAyMS4xNCw1OS42NyAyMS4xNiw2MC4yNyAyMS4xOSw2MC44NyAyMS4yMiw2MS40NyAyMS4yNSw2Mi4wNyAyMS4yNSw2Mi42NyAyMS4yMyw2My4yNyAyMS4yMCw2My44NyAyMS4xNyw2NC40NyAyMS4xNiw2NS4wOCAyMS4xMiw2NS42OCAyMS4wOCw2Ni4yOCAyMS4wMyw2Ni44OCAyMC45OSw2Ny40OCAyMC45Nyw2OC4wOCAyMC45NSw2OC42OCAyMC45MSw2OS4yOCAyMC44Myw2OS44OSAyMC43NSw3MC40OSAyMC42Nyw3MS4wOSAyMC42Miw3MS42OSAyMC42Niw3Mi4yOSAyMC43Niw3Mi44OSAyMC44Nyw3My40OSAyMC45Myw3NC4wOSAyMC45Myw3NC42OSAyMC44OSw3NS4zMCAyMC44Niw3NS45MCAyMC44Nyw3Ni41MCAyMC44OCw3Ny4xMCAyMC44Nyw3Ny43MCAyMC44NCw3OC4zMCAyMC43Nyw3OC45MCAyMC42NSw3OS41MCAyMC40OSw4MC4xMCAyMC4zMiw4MC43MSAyMC4xNSw4MS4zMSAxOS45OCw4MS45MSAxOS44Miw4Mi41MSAxOS43MSw4My4xMSAxOS42OCw4My43MSAxOS42OSw4NC4zMSAxOS43Miw4NC45MSAxOS43Nyw4NS41MiAxOS44NSw4Ni4xMiAxOS45NSw4Ni43MiAyMC4wNCw4Ny4zMiAyMC4xMSw4Ny45MiAyMC4xNSw4OC41MiAyMC4xNyw4OS4xMiAyMC4yMyw4OS43MiAyMC4zMiw5MC4zMiAyMC40MSw5MC45MyAyMC41MSw5MS41MyAyMC42MSw5Mi4xMyAyMC43MSw5Mi43MyAyMC44MCw5My4zMyAyMC44OCw5My45MyAyMC45NSw5NC42NiAyMS41Niw5NS44NyAyMi42Nyw5Ni4xMSAyMy4yMSw5Ni4yOSAyMy43Miw5Ni41MyAyNC4yMiw5Ni43OSAyNC43MSw5Ni45OSAyNS4yMCw5Ny4xOCAyNS43MCw5Ny4zNSAyNi4xOCw5Ny41NCAyNi42NCw5Ny43OCAyNy4xMSw5OC4wMSAyNy41Nyw5OC4yNSAyOC4wMCw5OC41NCAyOC4zNiw5OC45MiAyOC43MSw5OS4zMiAyOS4wNCw5OS43MCAyOS4zOSwxMDAuMDcgMjkuNzYsMTAwLjQwIDMwLjE1LDEwMC43MyAzMC41NCwxMDEuMDYgMzAuOTQsMTAxLjQwIDMxLjMyLDEwMS43NyAzMS42NCwxMDIuMTggMzEuOTAsMTAyLjYzIDMyLjE1LDEwMy4wOSAzMi4zOCwxMDMuNTYgMzIuNjIsMTA0LjAyIDMyLjg3LDEwNC41MCAzMy4wOCwxMDQuOTggMzMuMjQsMTA1LjQ5IDMzLjM2LDEwNi4wMSAzMy40NSwxMDYuNTQgMzMuNTIsMTA3LjA3IDMzLjU4LDEwNy44MSAzNC40MSwxMDkuMjUgMzUuNzUsMTA5LjQ3IDM2LjM1LDEwOS40OCAzNi45NiwxMDkuNDUgMzcuNTYsMTA5LjQxIDM4LjE2LDEwOS4zNiAzOC43NiwxMDkuMzIgMzkuMzYsMTA5LjI5IDM5Ljk2LDEwOS4yMSA0MC41NiwxMDkuMTQgNDEuMTYsMTA5LjA1IDQxLjc2LDEwOC45OCA0Mi4zNywxMDguOTMgNDIuOTcsMTA4Ljg3IDQzLjU3LDEwOC43OSA0NC4xNywxMDguNzEgNDQuNzcsMTA4LjY3IDQ1LjM3LDEwOC42OCA0NS45NywxMDguNzEgNDYuNTcsMTA4LjcyIDQ3LjE4LDEwOC43MCA0Ny43OCwxMDguNjkgNDguMzgsMTA4LjcyIDQ4Ljk4LDEwOC43OSA0OS41OCwxMDguODUgNTAuMTgsMTA4Ljg5IDUwLjc4LDEwOC45MSA1MS4zOCwxMDguOTcgNTEuOTgsMTA5LjA4IDUyLjU5LDEwOS4xOCA1My4xOSwxMDkuMjMgNTMuNzksMTA5LjI2IDU0LjM5LDEwOS4yOSA1NC45OSwxMDkuMzMgNTUuNTksMTA5LjM1IDU2LjE5LDEwOS4zNCA1Ni43OSwxMDkuMzEgNTcuMzksMTA5LjMzIDU4LjAwLDEwOS40MCA1OC42MCwxMDkuNDggNTkuMjAsMTA5LjU0IDU5LjgwLDEwOS42MCA2MC40MCwxMDkuNjUgNjEuMDAsMTA5LjY3IDYxLjYwLDEwOS42NiA2Mi4yMCwxMDkuNjEgNjIuODAsMTA5LjU1IDYzLjQxLDEwOS41MSA2NC4wMSwxMDkuNDcgNjQuNjEsMTA5LjQzIDY1LjIxLDEwOS4zOSA2NS44MSwxMDkuMzggNjYuNDEsMTA5LjQwIDY3LjAxLDEwOS40MiA2Ny42MSwxMDkuMzkgNjguMjIsMTA5LjM0IDY4LjgyLDEwOS4yOCA2OS40MiwxMDkuMjEgNzAuMDIsMTA5LjEyIDcwLjYyLDEwOC45OSA3MS4yMiwxMDguODQgNzEuODIsMTA4LjczIDcyLjQyLDEwOC42OCA3My4wMiwxMDguNzEgNzMuNjMsMTA4Ljc4IDc0LjIzLDEwOC44NiA3NC44MywxMDguOTEgNzUuNDMsMTA4Ljk2IDc2LjAzLDEwOS4wMSA3Ni42MywxMDkuMDYgNzcuMjMsMTA5LjEyIDc3LjgzLDEwOS4xMiA3OC40MywxMDkuMTAgNzkuMDQsMTA5LjA4IDc5LjY0LDEwOS4xMCA4MC4yNCwxMDkuMDkgODAuODQsMTA5LjA2IDgxLjQ0LDEwOS4wNCA4Mi4wNCwxMDkuMDQgODIuNjQsMTA5LjA0IDgzLjI0LDEwOS4wNSA4My44NSwxMDkuMDUgODQuNDUsMTA5LjA1IDg1LjA1LDEwOS4xMSA4NS42NSwxMDkuMTkgODYuMjUsMTA5LjIzIDg2Ljg1LDEwOS4yMCA4Ny40NSwxMDkuMTYgODguMDUsMTA5LjExIDg4LjY1LDEwOS4wNSA4OS4yNiwxMDguOTkgODkuODYsMTA4LjkwIDkwLjQ2LDEwOC44MiA5MS4wNiwxMDguNzUgOTEuNjYsMTA4Ljc0IDkyLjI2LDEwOC43NyA5Mi44NiwxMDguODQgOTMuNDYsMTA4LjkxIDk0LjA2LDEwOC45OSA5NC42NywxMDkuMTIgOTUuMjcsMTA5LjI2IDk1Ljg3LDEwOS40MCA5Ni40NywxMDkuNTIgOTcuMDcsMTA5LjYxIDk3LjY3LDEwOS42NiA5OC4yNywxMDkuNzAgOTguODcsMTA5LjcwIDk5LjQ3LDEwOS42MyAxMDAuMDgsMTA5LjUzIDEwMC42OCwxMDkuNDQgMTAxLjI4LDEwOS4zNyAxMDEuODgsMTA5LjMzIDEwMi40OCwxMDkuMjkgMTAzLjA4LDEwOS4yMyAxMDMuNjgsMTA5LjE3IDEwNC4yOCwxMDkuMTYgMTA0Ljg5LDEwOS4xOSAxMDUuNDksMTA5LjI0IDEwNi4wOSwxMDkuMjMgMTA2LjY5LDEwOS4xNiAxMDcuMjksMTA5LjEwIDEwNy44OSwxMDkuMTIgMTA4LjQ5LDEwOS4yMiAxMDkuMDksMTA5LjMzIDEwOS42OSwxMDkuNDAgMTEwLjMwLDEwOS40MiAxMTAuOTAsMTA5LjM4IDExMS41MCwxMDkuMzIgMTEyLjEwLDEwOS4yNiAxMTIuNzAsMTA5LjIzIDExMy4zMCwxMDkuMjIgMTEzLjkwLDEwOS4yNCAxMTQuNTAsMTA5LjI2IDExNS4xMCwxMDkuMjcgMTE1LjcxLDEwOS4yNiAxMTYuMzEsMTA5LjI0IDExNi45MSwxMDkuMjQgMTE3LjUxLDEwOS4yOCAxMTguMTEsMTA5LjM1IDExOC43MSwxMDkuNDMgMTE5LjMxLDEwOS41MSAxMTkuOTEsMTA5LjU3IDEyMC41MiwxMDkuNTggMTIxLjEyLDEwOS41NCAxMjEuNzIsMTA5LjQ4IDEyMi4zMiwxMDkuNDIgMTIyLjkyLDEwOS4zOCAxMjMuNTIsMTA5LjM0IDEyNC4xMiwxMDkuMzAgMTI0LjcyLDEwOS4yNyAxMjUuMzIsMTA5LjMyIDEyNS45MywxMDkuNDMgMTI2LjUzLDEwOS41NCAxMjcuMTMsMTA5LjYxIDEyNy43MywxMDkuNjMgMTI4LjMzLDEwOS42NCAxMjguOTMsMTA5LjY1IDEyOS41MywxMDkuNjggMTMwLjEzLDEwOS43MiAxMzAuNzMsMTA5Ljc1IDEzMS4zNCwxMDkuNzggMTMxLjk0LDEwOS44MiAxMzIuNTQsMTA5Ljg4IDEzMy4xNCwxMDkuOTMgMTMzLjc0LDEwOS45NiAxMzQuMzQsMTA5Ljk2IDEzNC45NCwxMDkuOTEgMTM1LjU0LDEwOS44MyAxMzYuMTQsMTA5Ljc0IDEzNi43NSwxMDkuNjIgMTM3LjM1LDEwOS40OCAxMzcuOTUsMTA5LjMzIDEzOC41NSwxMDkuMTcgMTM5LjE1LDEwOS4wMiAxMzkuNzUsMTA4Ljk0IDE0MC4zNSwxMDguOTIgMTQwLjk1LDEwOC45MiAxNDEuNTYsMTA4LjkyIDE0Mi4xNiwxMDguOTYgMTQyLjc2LDEwOS4wMiAxNDMuMzYsMTA5LjA4IDE0My45NiwxMDkuMTQgMTQ0LjU2LDEwOS4yMSAxNDUuMTYsMTA5LjI4IDE0NS43NiwxMDkuMzIgMTQ2LjM2LDEwOS4zMCAxNDYuOTcsMTA5LjIyIDE0Ny41NywxMDkuMTQgMTQ4LjE3LDEwOS4xMCAxNDguNzcsMTA5LjE1IDE0OS4zNywxMDkuMjQgMTQ5Ljk3LDEwOS4zMyAxNTAuNTcsMTA5LjQxIDE1MS4xNywxMDkuNDUgMTUxLjc3LDEwOS40NSAxNTIuMzgsMTA5LjQxIDE1Mi45OCwxMDkuMzUgMTUzLjU4LDEwOS4zMSAxNTQuMTgsMTA5LjMwIDE1NC43OCwxMDkuMjggMTU1LjM4LDEwOS4yMyAxNTUuOTgsMTA5LjE2IDE1Ni41OCwxMDkuMTAgMTU3LjE5LDEwOS4wNyAxNTcuNzksMTA5LjA2IDE1OC4zOSwxMDkuMDIgMTU4Ljk5LDEwOC45NCAxNTkuNTksMTA4Ljg1IDE2MC4xOSwxMDguNzkgMTYwLjc5LDEwOC43NCAxNjEuMzksMTA4LjY3IDE2MS45OSwxMDguNjEgMTYyLjYwLDEwOC41OSAxNjMuMjAsMTA4LjY0IDE2My44MCwxMDguNzUgMTY0LjQwLDEwOC44OCAxNjUuNjksMTA4LjcxIDE2Ni4wOCwxMDcuNDUgMTY2LjE2LDEwNi45MCAxNjYuMjYsMTA2LjM2IDE2Ni4zOSwxMDUuODMgMTY2LjU2LDEwNS4zMSAxNjYuNzUsMTA0LjgwIDE2Ni45NiwxMDQuMzAgMTY3LjE4LDEwMy44MSAxNjcuNDMsMTAzLjMzIDE2Ny42OSwxMDIuODYgMTY3Ljk3LDEwMi40MSAxNjguMjYsMTAxLjk2IDE2OC41NCwxMDEuNTEgMTY4Ljg0LDEwMS4wNyAxNjkuMTYsMTAwLjY1IDE2OS41MSwxMDAuMjUgMTY5LjkxLDk5Ljg5IDE3MC4zMiw5OS41NiAxNzAuNzQsOTkuMjQgMTcxLjE1LDk4LjkyIDE3MS41Niw5OC41OSAxNzEuOTgsOTguMjYgMTcyLjQwLDk3LjkzIDE3Mi44Myw5Ny41OSAxNzMuMjcsOTcuMjUgMTczLjczLDk2LjkzIDE3NC4yMCw5Ni42MyAxNzQuNzEsOTYuMzggMTc1LjI0LDk2LjE5IDE3NS43OCw5Ni4wNiAxNzYuMzQsOTYuMDAgMTc2LjkxLDk2LjAyIDE3Ny40OSw5Ni4xNiAxNzkuMDIsOTUuOTIgMTc5LjYzLDk0LjM4IDE3OS44NSw5My43OCAxODAuMDUsOTMuMTggMTgwLjIxLDkyLjU4IDE4MC4zMiw5MS45OCAxODAuMzQsOTEuMzcgMTgwLjMyLDkwLjc3IDE4MC4yOCw5MC4xNyAxODAuMjIsODkuNTcgMTgwLjEwLDg4Ljk3IDE3OS45Nyw4OC4zNyAxNzkuODQsODcuNzcgMTc5LjcxLDg3LjE3IDE3OS41OSw4Ni41NyAxNzkuNDUsODUuOTYgMTc5LjI5LDg1LjM2IDE3OS4xNSw4NC43NiAxNzkuMDcsODQuMTYgMTc5LjA3LDgzLjU2IDE3OS4xMSw4Mi45NiAxNzkuMTQsODIuMzYgMTc5LjExLDgxLjc2IDE3OS4wMyw4MS4xNSAxNzguOTMsODAuNTUgMTc4Ljg0LDc5Ljk1IDE3OC43OCw3OS4zNSAxNzguNzQsNzguNzUgMTc4LjcwLDc4LjE1IDE3OC42NSw3Ny41NSAxNzguNTgsNzYuOTUgMTc4LjUyLDc2LjM1IDE3OC40Niw3NS43NCAxNzguNDUsNzUuMTQgMTc4LjQ5LDc0LjU0IDE3OC42MCw3My45NCAxNzguNzMsNzMuMzQgMTc4Ljg2LDcyLjc0IDE3OC45NCw3Mi4xNCAxNzkuMDAsNzEuNTQgMTc5LjAzLDcwLjk0IDE3OS4wNSw3MC4zMyAxNzkuMDIsNjkuNzMgMTc4LjkyLDY5LjEzIDE3OC43OCw2OC41MyAxNzguNjIsNjcuOTMgMTc4LjQ3LDY3LjMzIDE3OC4zNSw2Ni43MyAxNzguMjYsNjYuMTMgMTc4LjIwLDY1LjUzIDE3OC4xOSw2NC45MiAxNzguMjMsNjQuMzIgMTc4LjI4LDYzLjcyIDE3OC4zNCw2My4xMiAxNzguNDAsNjIuNTIgMTc4LjQ3LDYxLjkyIDE3OC41NSw2MS4zMiAxNzguNjEsNjAuNzIgMTc4LjYzLDYwLjExIDE3OC42MCw1OS41MSAxNzguNjEsNTguOTEgMTc4LjY3LDU4LjMxIDE3OC43NCw1Ny43MSAxNzguNzcsNTcuMTEgMTc4Ljc5LDU2LjUxIDE3OC44NSw1NS45MSAxNzguOTQsNTUuMzEgMTc5LjAxLDU0LjcwIDE3OS4wNCw1NC4xMCAxNzkuMDYsNTMuNTAgMTc5LjEwLDUyLjkwIDE3OS4xNSw1Mi4zMCAxNzkuMjEsNTEuNzAgMTc5LjI2LDUxLjEwIDE3OS4zMiw1MC41MCAxNzkuMzcsNDkuOTAgMTc5LjQxLDQ5LjI5IDE3OS40Miw0OC42OSAxNzkuNDAsNDguMDkgMTc5LjM2LDQ3LjQ5IDE3OS4zMiw0Ni44OSAxNzkuMzEsNDYuMjkgMTc5LjM0LDQ1LjY5IDE3OS4zOSw0NS4wOSAxNzkuNDQsNDQuNDggMTc5LjQ4LDQzLjg4IDE3OS41NCw0My4yOCAxNzkuNTcsNDIuNjggMTc5LjUyLDQyLjA4IDE3OS4zNiw0MS40OCAxNzkuMTIsNDAuODggMTc4Ljg0LDQwLjI4IDE3OC41OSwzOS42OCAxNzguNDMsMzkuMDcgMTc4LjMxLDM4LjQ3IDE3OC4yMywzNy44NyAxNzguMjIsMzcuMjcgMTc4LjI4LDM2LjY3IDE3OC40MCwzNi4wNyAxNzguNTMsMzUuNDAgMTc4LjIzLDM0LjQ1IDE3Ny4zMSwzNC4yMyAxNzYuNzUsMzQuMTEgMTc2LjIwLDM0LjAwIDE3NS42NSwzMy44NyAxNzUuMTEsMzMuNzIgMTc0LjYwLDMzLjUwIDE3NC4xMCwzMy4yNCAxNzMuNjEsMzIuOTcgMTczLjE0LDMyLjcxIDE3Mi42OCwzMi40MSAxNzIuMjQsMzIuMDggMTcxLjgxLDMxLjc3IDE3MS4zNCwzMS41MCAxNzAuODIsMzEuMzAgMTcwLjI2LDMxLjExIDE2OS43MiwzMC44OCAxNjkuMjUsMzAuNTYgMTY4LjgzLDMwLjE4IDE2OC40NiwyOS43NSAxNjguMTIsMjkuMjkgMTY3Ljc5LDI4LjgzIDE2Ny40OSwyOC4zNSAxNjcuMjEsMjcuODUgMTY2Ljk4LDI3LjMzIDE2Ni44MSwyNi43OSAxNjYuNjYsMjYuMjQgMTY2LjUzLDI1LjcwIDE2Ni40MiwyNS4xNSAxNjYuMzAsMjQuNjEgMTY2LjE2LDI0LjA3IDE2Ni4wNSwyMy41MyAxNjYuMDEsMjIuOTcgMTY2LjAzLDIyLjI2IDE2NS40MiwyMS4wMyAxNjQuMjUsMjAuNzggMTYzLjY1LDIwLjcxIDE2My4wNCwyMC42OSAxNjIuNDQsMjAuNzIgMTYxLjg0LDIwLjc4IDE2MS4yNCwyMC44NiAxNjAuNjQsMjAuODggMTYwLjA0LDIwLjgyIDE1OS40NCwyMC43NSAxNTguODQsMjAuNzQgMTU4LjI0LDIwLjgzIDE1Ny42MywyMC45MyAxNTcuMDMsMjEuMDEgMTU2LjQzLDIxLjAyIDE1NS44MywyMC45NyAxNTUuMjMsMjAuOTIgMTU0LjYzLDIwLjg3IDE1NC4wMywyMC44MCAxNTMuNDMsMjAuNzAgMTUyLjgyLDIwLjU3IDE1Mi4yMiwyMC40NiAxNTEuNjIsMjAuNDAgMTUxLjAyLDIwLjM2IDE1MC40MiwyMC4zMSAxNDkuODIsMjAuMjggMTQ5LjIyLDIwLjMwIDE0OC42MiwyMC4zOCAxNDguMDIsMjAuNDggMTQ3LjQxLDIwLjU5IDE0Ni44MSwyMC42OSAxNDYuMjEsMjAuNzYgMTQ1LjYxLDIwLjgxIDE0NS4wMSwyMC44NiAxNDQuNDEsMjAuOTMgMTQzLjgxLDIxLjA0IDE0My4yMSwyMS4xOCAxNDIuNjEsMjEuMjkgMTQyLjAwLDIxLjMzIDE0MS40MCwyMS4zOSAxNDAuODAsMjEuNDIgMTQwLjIwLDIxLjQzIDEzOS42MCwyMS40NSAxMzkuMDAsMjEuNDggMTM4LjQwLDIxLjM0IDEzNy44MCwyMS4xOCAxMzcuMjAsMjEuMTMgMTM2LjU5LDIxLjE2IDEzNS45OSwyMS4yMiAxMzUuMzksMjEuMjYgMTM0Ljc5LDIxLjI1IDEzNC4xOSwyMS4xOSAxMzMuNTksMjEuMTEgMTMyLjk5LDIxLjAyIDEzMi4zOSwyMC45NyAxMzEuNzgsMjAuOTMgMTMxLjE4LDIwLjkyIDEzMC41OCwyMC45MCAxMjkuOTgsMjAuODcgMTI5LjM4LDIwLjg1IDEyOC43OCwyMC44NSAxMjguMTgsMjAuODQgMTI3LjU4LDIwLjgxIDEyNi45OCwyMC43NCAxMjYuMzcsMjAuNjcgMTI1Ljc3LDIwLjYyIDEyNS4xNywyMC42MSAxMjQuNTcsMjAuNjIgMTIzLjk3LDIwLjYzIDEyMy4zNywyMC42NCAxMjIuNzcsMjAuNjUgMTIyLjE3LDIwLjY3IDEyMS41NywyMC42OCAxMjAuOTYsMjAuNzAgMTIwLjM2LDIwLjcyIDExOS43NiwyMC43MiAxMTkuMTYsMjAuNzIgMTE4LjU2LDIwLjczIDExNy45NiwyMC43NiAxMTcuMzYsMjAuODAgMTE2Ljc2LDIwLjg0IDExNi4xNSwyMC44OSAxMTUuNTUsMjAuOTQgMTE0Ljk1LDIxLjAyIDExNC4zNSwyMS4xMCAxMTMuNzUsMjEuMTUgMTEzLjE1LDIxLjE5IDExMi41NSwyMS4yNCAxMTEuOTUsMjEuMjkgMTExLjM1LDIxLjMzIDExMC43NCwyMS4zMSAxMTAuMTQsMjEuMjEgMTA5LjU0LDIxLjA4IDEwOC45NCwyMS4wMSAxMDguMzQsMjEuMDQgMTA3Ljc0LDIxLjExIDEwNy4xNCwyMS4xOSAxMDYuNTQsMjEuMjggMTA1Ljk0LDIxLjM3IDEwNS4zMywyMS40NiAxMDQuNzMsMjEuNTMgMTA0LjEzLDIxLjU1IDEwMy41MywyMS41MyAxMDIuOTMsMjEuNTEgMTAyLjMzLDIxLjQ4IDEwMS43MywyMS40MSAxMDEuMTMsMjEuMzMgMTAwLjUzLDIxLjMyIDk5LjkyLDIxLjMyIDk5LjMyLDIxLjMxIDk4LjcyLDIxLjI1IDk4LjEyLDIxLjEzIDk3LjUyLDIxLjAxIDk2LjkyLDIwLjk0IDk2LjMyLDIwLjk1IDk1LjcyLDIwLjk4IDk1LjExLDIxLjAxIDk0LjUxLDIxLjAyIDkzLjkxLDIxLjAzIDkzLjMxLDIxLjA2IDkyLjcxLDIxLjEwIDkyLjExLDIxLjEzIDkxLjUxLDIxLjE4IDkwLjkxLDIxLjI0IDkwLjMxLDIxLjMxIDg5LjcwLDIxLjM1IDg5LjEwLDIxLjM1IDg4LjUwLDIxLjMzIDg3LjkwLDIxLjMwIDg3LjMwLDIxLjI5IDg2LjcwLDIxLjMwIDg2LjEwLDIxLjM1IDg1LjUwLDIxLjM5IDg0LjkwLDIxLjQyIDg0LjI5LDIxLjQxIDgzLjY5LDIxLjM3IDgzLjA5LDIxLjMzIDgyLjQ5LDIxLjMxIDgxLjg5LDIxLjMzIDgxLjI5LDIxLjM2IDgwLjY5LDIxLjM5IDgwLjA5LDIxLjM5IDc5LjQ4LDIxLjQwIDc4Ljg4LDIxLjQwIDc4LjI4LDIxLjQxIDc3LjY4LDIxLjQwIDc3LjA4LDIxLjM2IDc2LjQ4LDIxLjI5IDc1Ljg4LDIxLjI0IDc1LjI4LDIxLjIyIDc0LjY4LDIxLjI1IDc0LjA3LDIxLjI4IDczLjQ3LDIxLjMyIDcyLjg3LDIxLjM2IDcyLjI3LDIxLjM0IDcxLjY3LDIxLjMwIDcxLjA3LDIxLjI4IDcwLjQ3LDIxLjMyIDY5Ljg3LDIxLjQxIDY5LjI3LDIxLjUxIDY4LjY2LDIxLjU5IDY4LjA2LDIxLjYxIDY3LjQ2LDIxLjYxIDY2Ljg2LDIxLjU3IDY2LjI2LDIxLjQ5IDY1LjY2LDIxLjM2IDY1LjA2LDIxLjIwIDY0LjQ2LDIxLjAyIDYzLjg2LDIwLjgyIDYzLjI1LDIwLjYyIDYyLjY1LDIwLjQyIDYyLjA1LDIwLjI2IDYxLjQ1LDIwLjE3IDYwLjg1LDIwLjE3IDYwLjI1LDIwLjIxIDU5LjY1LDIwLjMwIDU5LjA1LDIwLjQyIDU4LjQ0LDIwLjU2IDU3Ljg0LDIwLjc2IDU3LjI0LDIwLjk2IDU2LjY0LDIxLjA5IDU2LjA0LDIxLjA3IDU1LjQ0LDIwLjkwIDU0Ljg0LDIwLjY2IDU0LjI0LDIwLjQ0IDUzLjY0LDIwLjMwIDUzLjAzLDIwLjIwIDUyLjQzLDIwLjEzIDUxLjgzLDIwLjA3IDUxLjIzLDIwLjAxIDUwLjYzLDE5Ljk4IDUwLjAzLDIwLjAwIDQ5LjQzLDIwLjA5IDQ4LjgzLDIwLjI0IDQ4LjIzLDIwLjQxIDQ3LjYyLDIwLjYwIDQ3LjAyLDIwLjc2IDQ2LjQyLDIwLjg5IDQ1LjgyLDIxLjAwIDQ1LjIyLDIxLjA3IDQ0LjYyLDIxLjEyIDQ0LjAyLDIxLjE2IDQzLjQyLDIxLjE4IDQyLjgxLDIxLjE5IDQyLjIxLDIxLjE4IDQxLjYxLDIxLjEyIDQxLjAxLDIwLjk4IDQwLjQxLDIwLjgzIDM5LjgxLDIwLjcyIDM5LjIxLDIwLjY3IDM4LjYxLDIwLjY3IDM4LjAxLDIwLjY4IDM3LjQwLDIwLjY2IDM2LjgwLDIwLjY0IDM2LjIwLDIwLjY2IDM1LjYwLDIwLjcwIDM1LjAwLDIwLjcyIFoiLz48cGF0aCBmaWxsPSIjOGY2ZjUwIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0gMzcuMDAsMjguMjQgMzcuNjAsMjguMjggMzguMjAsMjguMzYgMzguODAsMjguNDUgMzkuNDEsMjguNTEgNDAuMDEsMjguNTEgNDAuNjEsMjguNDggNDEuMjEsMjguNDYgNDEuODEsMjguNDcgNDIuNDEsMjguNTAgNDMuMDIsMjguNTMgNDMuNjIsMjguNTQgNDQuMjIsMjguNTMgNDQuODIsMjguNTEgNDUuNDIsMjguNDggNDYuMDIsMjguNDUgNDYuNjMsMjguNDMgNDcuMjMsMjguNDEgNDcuODMsMjguNDIgNDguNDMsMjguNDUgNDkuMDMsMjguNDkgNDkuNjMsMjguNTMgNTAuMjQsMjguNTcgNTAuODQsMjguNjEgNTEuNDQsMjguNjYgNTIuMDQsMjguNzQgNTIuNjQsMjguODAgNTMuMjQsMjguODQgNTMuODUsMjguODMgNTQuNDUsMjguODAgNTUuMDUsMjguNzUgNTUuNjUsMjguNzAgNTYuMjUsMjguNjUgNTYuODUsMjguNTkgNTcuNDYsMjguNTQgNTguMDYsMjguNTAgNTguNjYsMjguNDcgNTkuMjYsMjguNDQgNTkuODYsMjguNDEgNjAuNDYsMjguMzcgNjEuMDcsMjguMzYgNjEuNjcsMjguMzUgNjIuMjcsMjguMzUgNjIuODcsMjguMzQgNjMuNDcsMjguMzQgNjQuMDcsMjguMzEgNjQuNjgsMjguMjkgNjUuMjgsMjguMjggNjUuODgsMjguMzAgNjYuNDgsMjguMzUgNjcuMDgsMjguNDIgNjcuNjgsMjguNDcgNjguMjksMjguNDcgNjguODksMjguNDYgNjkuNDksMjguNDIgNzAuMDksMjguMzkgNzAuNjksMjguMzcgNzEuMjksMjguMzMgNzEuOTAsMjguMzAgNzIuNTAsMjguMjcgNzMuMTAsMjguMjcgNzMuNzAsMjguMzAgNzQuMzAsMjguMzUgNzQuOTAsMjguMzkgNzUuNTEsMjguNDMgNzYuMTEsMjguNDggNzYuNzEsMjguNTMgNzcuMzEsMjguNTYgNzcuOTEsMjguNTggNzguNTEsMjguNTkgNzkuMTIsMjguNjAgNzkuNzIsMjguNTkgODAuMzIsMjguNTggODAuOTIsMjguNTQgODEuNTIsMjguNTAgODIuMTIsMjguNDUgODIuNzIsMjguNDAgODMuMzMsMjguMzYgODMuOTMsMjguMzMgODQuNTMsMjguMzEgODUuMTMsMjguMjkgODUuNzMsMjguMjYgODYuMzMsMjguMjQgODYuOTQsMjguMjQgODcuNTQsMjguMjYgODguMTQsMjguMjkgODguNzQsMjguMzEgODkuMzQsMjguMzMgODkuOTQsMjguMzQgOTAuNTUsMjguMzUgOTEuMTUsMjguMzcgOTEuNzUsMjguNDAgOTIuMzUsMjguNDMgOTIuOTUsMjguNDQgOTMuNTUsMjguNDUgOTQuMTYsMjguNDkgOTQuNzYsMjguNTUgOTUuMzYsMjguNjIgOTUuOTYsMjguNjggOTYuNTYsMjguNjkgOTcuMTYsMjguNjggOTcuNzcsMjguNjUgOTguMzcsMjguNjIgOTguOTcsMjguNjIgOTkuNTcsMjguNjMgMTAwLjE3LDI4LjY0IDEwMC43NywyOC42NSAxMDEuMzgsMjguNjYgMTAxLjk4LDI4LjY3IDEwMi41OCwyOC42OCAxMDMuMTgsMjguNjkgMTAzLjc4LDI4LjcwIDEwNC4zOCwyOC42OCAxMDQuOTksMjguNjUgMTA1LjU5LDI4LjYyIDEwNi4xOSwyOC42MSAxMDYuNzksMjguNjAgMTA3LjM5LDI4LjU5IDEwNy45OSwyOC41NiAxMDguNjAsMjguNTAgMTA5LjIwLDI4LjQ1IDEwOS44MCwyOC40MCAxMTAuNDAsMjguMzcgMTExLjAwLDI4LjM2IDExMS42MCwyOC4zNSAxMTIuMjEsMjguMzYgMTEyLjgxLDI4LjM5IDExMy40MSwyOC40MiAxMTQuMDEsMjguNDIgMTE0LjYxLDI4LjQwIDExNS4yMSwyOC40MCAxMTUuODIsMjguNDYgMTE2LjQyLDI4LjU2IDExNy4wMiwyOC42NiAxMTcuNjIsMjguNzIgMTE4LjIyLDI4LjcwIDExOC44MiwyOC42NSAxMTkuNDMsMjguNTkgMTIwLjAzLDI4LjU0IDEyMC42MywyOC41MCAxMjEuMjMsMjguNDYgMTIxLjgzLDI4LjQzIDEyMi40MywyOC40MCAxMjMuMDMsMjguMzkgMTIzLjY0LDI4LjQwIDEyNC4yNCwyOC40MSAxMjQuODQsMjguNDQgMTI1LjQ0LDI4LjQ2IDEyNi4wNCwyOC40NyAxMjYuNjQsMjguNDkgMTI3LjI1LDI4LjUwIDEyNy44NSwyOC41MSAxMjguNDUsMjguNTQgMTI5LjA1LDI4LjU4IDEyOS42NSwyOC42MSAxMzAuMjUsMjguNjUgMTMwLjg2LDI4LjcwIDEzMS40NiwyOC43NCAxMzIuMDYsMjguNzcgMTMyLjY2LDI4Ljc3IDEzMy4yNiwyOC43NCAxMzMuODYsMjguNzEgMTM0LjQ3LDI4LjcxIDEzNS4wNywyOC43MiAxMzUuNjcsMjguNzQgMTM2LjI3LDI4Ljc2IDEzNi44NywyOC43NSAxMzcuNDcsMjguNzMgMTM4LjA4LDI4LjY5IDEzOC42OCwyOC42NCAxMzkuMjgsMjguNjEgMTM5Ljg4LDI4LjU3IDE0MC40OCwyOC41NSAxNDEuMDgsMjguNTIgMTQxLjY5LDI4LjUwIDE0Mi4yOSwyOC40OCAxNDIuODksMjguNDggMTQzLjQ5LDI4LjQ4IDE0NC4wOSwyOC40OSAxNDQuNjksMjguNDkgMTQ1LjMwLDI4LjQ5IDE0NS45MCwyOC40OCAxNDYuNTAsMjguNDcgMTQ3LjEwLDI4LjQ2IDE0Ny43MCwyOC40NiAxNDguMzAsMjguNDcgMTQ4LjkxLDI4LjQ4IDE0OS41MSwyOC40OSAxNTAuMTEsMjguNDkgMTUwLjcxLDI4LjUxIDE1MS4zMSwyOC41NCAxNTEuOTEsMjguNTggMTUyLjUyLDI4LjYyIDE1My4xMiwyOC42NiAxNTMuNzIsMjguNjcgMTU0LjMyLDI4LjY3IDE1NC45MiwyOC42NiAxNTUuNTIsMjguNjQgMTU2LjEzLDI4LjU5IDE1Ni43MywyOC40OSAxNTcuMzMsMjguMzkgMTU3LjkzLDI4LjMwIDE1OC41MywyOC4yOCAxNTkuMTMsMjguMzAgMTU5Ljc0LDI4LjM2IDE2MC4zNCwyOC40MSAxNjAuOTQsMjguNDEgMTYxLjU0LDI4LjQwIDE2Mi4xNCwyOC4zOCAxNjIuNjEsMjguMzQgMTYyLjY1LDI4LjQ2IDE2Mi42NiwyOC45OSAxNjIuNzMsMjkuNjEgMTYyLjg1LDMwLjIzIDE2Mi45OCwzMC44NSAxNjMuMTUsMzEuNDYgMTYzLjM0LDMyLjA3IDE2My41NywzMi42OCAxNjMuODQsMzMuMjcgMTY0LjE3LDMzLjgzIDE2NC41OSwzNC4zMyAxNjUuMDUsMzQuNzkgMTY1LjU1LDM1LjIxIDE2Ni4wNywzNS41OCAxNjYuNjIsMzUuOTIgMTY3LjE4LDM2LjIzIDE2Ny43NSwzNi41MSAxNjguMzMsMzYuNzkgMTY4LjkxLDM3LjA0IDE2OS41MiwzNy4yNCAxNzAuMTQsMzcuMzkgMTcwLjc3LDM3LjUxIDE3MS4zOCwzNy41OSAxNzEuNTAsMzcuNDYgMTcxLjMxLDM3LjY1IDE3MS4yOCwzOC4yNSAxNzEuMjQsMzguODUgMTcxLjIwLDM5LjQ1IDE3MS4xNCw0MC4wNSAxNzEuMDcsNDAuNjYgMTcxLjA1LDQxLjI2IDE3MS4wNSw0MS44NiAxNzEuMDUsNDIuNDYgMTcxLjA5LDQzLjA2IDE3MS4xNyw0My42NiAxNzEuMjAsNDQuMjcgMTcxLjIxLDQ0Ljg3IDE3MS4yNCw0NS40NyAxNzEuMjYsNDYuMDcgMTcxLjMwLDQ2LjY3IDE3MS4zNCw0Ny4yNyAxNzEuMzksNDcuODggMTcxLjQ0LDQ4LjQ4IDE3MS41MSw0OS4wOCAxNzEuNTksNDkuNjggMTcxLjY3LDUwLjI4IDE3MS43MSw1MC44OCAxNzEuNzEsNTEuNDkgMTcxLjY4LDUyLjA5IDE3MS42Myw1Mi42OSAxNzEuNTksNTMuMjkgMTcxLjU2LDUzLjg5IDE3MS41NSw1NC40OSAxNzEuNTQsNTUuMTAgMTcxLjU0LDU1LjcwIDE3MS41Miw1Ni4zMCAxNzEuNTEsNTYuOTAgMTcxLjQ5LDU3LjUwIDE3MS40Niw1OC4xMCAxNzEuNDMsNTguNzAgMTcxLjQwLDU5LjMxIDE3MS4zNiw1OS45MSAxNzEuMzQsNjAuNTEgMTcxLjM0LDYxLjExIDE3MS4zNiw2MS43MSAxNzEuNDAsNjIuMzEgMTcxLjQzLDYyLjkyIDE3MS40NSw2My41MiAxNzEuNDksNjQuMTIgMTcxLjUyLDY0LjcyIDE3MS41NSw2NS4zMiAxNzEuNTUsNjUuOTIgMTcxLjU0LDY2LjUzIDE3MS41MSw2Ny4xMyAxNzEuNDksNjcuNzMgMTcxLjQ4LDY4LjMzIDE3MS40NCw2OC45MyAxNzEuNDAsNjkuNTMgMTcxLjM2LDcwLjE0IDE3MS4zNSw3MC43NCAxNzEuMzQsNzEuMzQgMTcxLjM0LDcxLjk0IDE3MS4zNCw3Mi41NCAxNzEuMzUsNzMuMTQgMTcxLjM3LDczLjc1IDE3MS40MCw3NC4zNSAxNzEuNDUsNzQuOTUgMTcxLjUxLDc1LjU1IDE3MS41Nyw3Ni4xNSAxNzEuNjMsNzYuNzUgMTcxLjY4LDc3LjM2IDE3MS43Myw3Ny45NiAxNzEuNzgsNzguNTYgMTcxLjgyLDc5LjE2IDE3MS44NCw3OS43NiAxNzEuODUsODAuMzYgMTcxLjg2LDgwLjk3IDE3MS44Nyw4MS41NyAxNzEuODUsODIuMTcgMTcxLjgzLDgyLjc3IDE3MS44Myw4My4zNyAxNzEuODIsODMuOTcgMTcxLjgwLDg0LjU4IDE3MS43Nyw4NS4xOCAxNzEuNzQsODUuNzggMTcxLjY4LDg2LjM4IDE3MS42Miw4Ni45OCAxNzEuNTgsODcuNTggMTcxLjUzLDg4LjE5IDE3MS40OSw4OC43OSAxNzEuNDYsODkuMzkgMTcxLjQyLDg5Ljk5IDE3MS4zOCw5MC41OSAxNzEuMzQsOTEuMTkgMTcxLjI5LDkxLjgwIDE3MS4yNCw5Mi40MCAxNzEuNDIsOTIuNDQgMTcxLjM0LDkyLjE5IDE3MC42OSw5Mi4yMyAxNzAuMDQsOTIuMzcgMTY5LjQzLDkyLjYwIDE2OC44Myw5Mi44OCAxNjguMjYsOTMuMTggMTY3LjcxLDkzLjUxIDE2Ny4xNyw5My44NSAxNjYuNjUsOTQuMjEgMTY2LjE2LDk0LjYwIDE2NS42Nyw5NS4wMCAxNjUuMTgsOTUuNDAgMTY0LjcwLDk1LjgzIDE2NC4yNCw5Ni4yOCAxNjMuNzksOTYuNzYgMTYzLjM4LDk3LjI3IDE2My4wMSw5Ny44MyAxNjIuNzEsOTguNDIgMTYyLjUxLDk5LjA2IDE2Mi40MSw5OS43MSAxNjIuMzYsMTAwLjM3IDE2Mi4zMywxMDEuMDMgMTYyLjM5LDEwMS40NiAxNjIuNTEsMTAxLjQyIDE2Mi4xMCwxMDEuNDQgMTYxLjUwLDEwMS40OCAxNjAuODksMTAxLjUwIDE2MC4yOSwxMDEuNDkgMTU5LjY5LDEwMS40OCAxNTkuMDksMTAxLjUwIDE1OC40OSwxMDEuNTMgMTU3Ljg5LDEwMS41NiAxNTcuMjgsMTAxLjU5IDE1Ni42OCwxMDEuNjMgMTU2LjA4LDEwMS42NyAxNTUuNDgsMTAxLjcwIDE1NC44OCwxMDEuNzEgMTU0LjI4LDEwMS42OCAxNTMuNjcsMTAxLjYxIDE1My4wNywxMDEuNTIgMTUyLjQ3LDEwMS40MyAxNTEuODcsMTAxLjM1IDE1MS4yNywxMDEuMzAgMTUwLjY3LDEwMS4yNiAxNTAuMDYsMTAxLjI0IDE0OS40NiwxMDEuMjUgMTQ4Ljg2LDEwMS4yNiAxNDguMjYsMTAxLjMwIDE0Ny42NiwxMDEuMzYgMTQ3LjA2LDEwMS40NiAxNDYuNDUsMTAxLjU2IDE0NS44NSwxMDEuNjYgMTQ1LjI1LDEwMS43MyAxNDQuNjUsMTAxLjc0IDE0NC4wNSwxMDEuNzIgMTQzLjQ1LDEwMS42OSAxNDIuODQsMTAxLjY3IDE0Mi4yNCwxMDEuNjggMTQxLjY0LDEwMS43MSAxNDEuMDQsMTAxLjc0IDE0MC40NCwxMDEuNzYgMTM5Ljg0LDEwMS43MyAxMzkuMjQsMTAxLjY4IDEzOC42MywxMDEuNjMgMTM4LjAzLDEwMS41OCAxMzcuNDMsMTAxLjU1IDEzNi44MywxMDEuNTIgMTM2LjIzLDEwMS40OSAxMzUuNjMsMTAxLjQ1IDEzNS4wMiwxMDEuNDAgMTM0LjQyLDEwMS4zNSAxMzMuODIsMTAxLjMyIDEzMy4yMiwxMDEuMzMgMTMyLjYyLDEwMS4zNSAxMzIuMDIsMTAxLjM3IDEzMS40MSwxMDEuMzggMTMwLjgxLDEwMS4zOCAxMzAuMjEsMTAxLjM1IDEyOS42MSwxMDEuMzIgMTI5LjAxLDEwMS4yOCAxMjguNDEsMTAxLjI3IDEyNy44MCwxMDEuMjkgMTI3LjIwLDEwMS4zNCAxMjYuNjAsMTAxLjQwIDEyNi4wMCwxMDEuNDMgMTI1LjQwLDEwMS40NyAxMjQuODAsMTAxLjUyIDEyNC4xOSwxMDEuNTUgMTIzLjU5LDEwMS41NyAxMjIuOTksMTAxLjU1IDEyMi4zOSwxMDEuNTIgMTIxLjc5LDEwMS41MSAxMjEuMTksMTAxLjUxIDEyMC41OCwxMDEuNTIgMTE5Ljk4LDEwMS41MyAxMTkuMzgsMTAxLjUzIDExOC43OCwxMDEuNTMgMTE4LjE4LDEwMS41NCAxMTcuNTgsMTAxLjU1IDExNi45NywxMDEuNTYgMTE2LjM3LDEwMS41NyAxMTUuNzcsMTAxLjU5IDExNS4xNywxMDEuNjIgMTE0LjU3LDEwMS42NSAxMTMuOTcsMTAxLjY3IDExMy4zNiwxMDEuNjUgMTEyLjc2LDEwMS42MiAxMTIuMTYsMTAxLjU5IDExMS41NiwxMDEuNTcgMTEwLjk2LDEwMS41MyAxMTAuMzYsMTAxLjQ4IDEwOS43NSwxMDEuNDIgMTA5LjE1LDEwMS4zNyAxMDguNTUsMTAxLjMzIDEwNy45NSwxMDEuMzAgMTA3LjM1LDEwMS4yOSAxMDYuNzUsMTAxLjMwIDEwNi4xNCwxMDEuMzUgMTA1LjU0LDEwMS40MiAxMDQuOTQsMTAxLjUyIDEwNC4zNCwxMDEuNjIgMTAzLjc0LDEwMS43MiAxMDMuMTQsMTAxLjgxIDEwMi41MywxMDEuODkgMTAxLjkzLDEwMS45MyAxMDEuMzMsMTAxLjkyIDEwMC43MywxMDEuODkgMTAwLjEzLDEwMS44NyA5OS41MywxMDEuODYgOTguOTIsMTAxLjg2IDk4LjMyLDEwMS44NSA5Ny43MiwxMDEuODMgOTcuMTIsMTAxLjgzIDk2LjUyLDEwMS44NSA5NS45MiwxMDEuODYgOTUuMzIsMTAxLjgzIDk0LjcxLDEwMS43NSA5NC4xMSwxMDEuNjcgOTMuNTEsMTAxLjU4IDkyLjkxLDEwMS40OSA5Mi4zMSwxMDEuNDAgOTEuNzEsMTAxLjMyIDkxLjEwLDEwMS4yNyA5MC41MCwxMDEuMjUgODkuOTAsMTAxLjI2IDg5LjMwLDEwMS4yNyA4OC43MCwxMDEuMjggODguMTAsMTAxLjI5IDg3LjQ5LDEwMS4zMiA4Ni44OSwxMDEuMzUgODYuMjksMTAxLjM4IDg1LjY5LDEwMS4zOSA4NS4wOSwxMDEuMzggODQuNDksMTAxLjM3IDgzLjg4LDEwMS4zNiA4My4yOCwxMDEuMzMgODIuNjgsMTAxLjI5IDgyLjA4LDEwMS4yNCA4MS40OCwxMDEuMTkgODAuODgsMTAxLjE4IDgwLjI3LDEwMS4yMCA3OS42NywxMDEuMjQgNzkuMDcsMTAxLjI4IDc4LjQ3LDEwMS4zMiA3Ny44NywxMDEuMzQgNzcuMjcsMTAxLjM0IDc2LjY2LDEwMS4zNSA3Ni4wNiwxMDEuMzggNzUuNDYsMTAxLjQyIDc0Ljg2LDEwMS40NyA3NC4yNiwxMDEuNTIgNzMuNjYsMTAxLjU2IDczLjA1LDEwMS42MSA3Mi40NSwxMDEuNjYgNzEuODUsMTAxLjcxIDcxLjI1LDEwMS43NSA3MC42NSwxMDEuODAgNzAuMDUsMTAxLjgzIDY5LjQ0LDEwMS44NCA2OC44NCwxMDEuODEgNjguMjQsMTAxLjc0IDY3LjY0LDEwMS42NiA2Ny4wNCwxMDEuNTggNjYuNDQsMTAxLjUyIDY1LjgzLDEwMS40OCA2NS4yMywxMDEuNDYgNjQuNjMsMTAxLjQ1IDY0LjAzLDEwMS40OCA2My40MywxMDEuNTUgNjIuODMsMTAxLjY1IDYyLjIyLDEwMS43NSA2MS42MiwxMDEuODMgNjEuMDIsMTAxLjg5IDYwLjQyLDEwMS45MyA1OS44MiwxMDEuOTYgNTkuMjIsMTAxLjk4IDU4LjYxLDEwMS45OSA1OC4wMSwxMDEuOTYgNTcuNDEsMTAxLjkwIDU2LjgxLDEwMS44MSA1Ni4yMSwxMDEuNzAgNTUuNjEsMTAxLjYwIDU1LjAxLDEwMS41MSA1NC40MCwxMDEuNDMgNTMuODAsMTAxLjM2IDUzLjIwLDEwMS4zMCA1Mi42MCwxMDEuMjUgNTIuMDAsMTAxLjIxIDUxLjQwLDEwMS4xOCA1MC43OSwxMDEuMTUgNTAuMTksMTAxLjEzIDQ5LjU5LDEwMS4xMiA0OC45OSwxMDEuMTIgNDguMzksMTAxLjE0IDQ3Ljc5LDEwMS4xOSA0Ny4xOCwxMDEuMjYgNDYuNTgsMTAxLjM3IDQ1Ljk4LDEwMS40OSA0NS4zOCwxMDEuNjAgNDQuNzgsMTAxLjcxIDQ0LjE4LDEwMS44MCA0My41NywxMDEuODcgNDIuOTcsMTAxLjkwIDQyLjM3LDEwMS44OCA0MS43NywxMDEuODMgNDEuMTcsMTAxLjc2IDQwLjU3LDEwMS42OSAzOS45NiwxMDEuNjEgMzkuMzYsMTAxLjU1IDM4Ljc2LDEwMS40OSAzOC4xNiwxMDEuNDcgMzcuNTgsMTAxLjQ0IDM3LjQzLDEwMS41NyAzNy41NiwxMDEuMzEgMzcuNDcsMTAwLjY4IDM3LjMwLDEwMC4wNiAzNy4wOCw5OS40NiAzNi44Myw5OC44OSAzNi41Nyw5OC4zMiAzNi4zMSw5Ny43NSAzNi4wMiw5Ny4xOSAzNS43MSw5Ni42NSAzNS4zNSw5Ni4xMyAzNC45Nyw5NS42MyAzNC41Niw5NS4xNSAzNC4xMSw5NC43MCAzMy42Miw5NC4yOSAzMy4xMSw5My45MCAzMi41OCw5My41NSAzMi4wMSw5My4yNCAzMS40MSw5My4wMSAzMC43OSw5Mi44MyAzMC4xNiw5Mi43MSAyOS41Myw5Mi42MyAyOC45MCw5Mi42MCAyOC40Miw5Mi42NCAyOC4zNyw5Mi41NSAyOC4zOCw5Mi4wNSAyOC40MCw5MS40NSAyOC40Miw5MC44NSAyOC40NSw5MC4yNSAyOC40OSw4OS42NSAyOC41Niw4OS4wNCAyOC42Niw4OC40NCAyOC43Miw4Ny44NCAyOC43NSw4Ny4yNCAyOC43Niw4Ni42NCAyOC43Nyw4Ni4wNCAyOC43OSw4NS40MyAyOC44Miw4NC44MyAyOC44NCw4NC4yMyAyOC44NSw4My42MyAyOC44Niw4My4wMyAyOC44Niw4Mi40MyAyOC44OCw4MS44MiAyOC44Nyw4MS4yMiAyOC44NCw4MC42MiAyOC43OCw4MC4wMiAyOC43MSw3OS40MiAyOC42Myw3OC44MiAyOC41NSw3OC4yMSAyOC40Niw3Ny42MSAyOC4zOCw3Ny4wMSAyOC4zMyw3Ni40MSAyOC4zMSw3NS44MSAyOC4zMCw3NS4yMSAyOC4zMSw3NC42MCAyOC4zNSw3NC4wMCAyOC4zOSw3My40MCAyOC40Myw3Mi44MCAyOC40NCw3Mi4yMCAyOC40Myw3MS42MCAyOC40MSw3MC45OSAyOC4zOSw3MC4zOSAyOC4zOSw2OS43OSAyOC4zOCw2OS4xOSAyOC4zNiw2OC41OSAyOC4zNCw2Ny45OSAyOC4zMiw2Ny4zOCAyOC4yOSw2Ni43OCAyOC4yNyw2Ni4xOCAyOC4yNSw2NS41OCAyOC4yNSw2NC45OCAyOC4yNSw2NC4zOCAyOC4yNCw2My43NyAyOC4yMiw2My4xNyAyOC4xNyw2Mi41NyAyOC4xMiw2MS45NyAyOC4wNyw2MS4zNyAyOC4wNiw2MC43NyAyOC4wOSw2MC4xNiAyOC4xNyw1OS41NiAyOC4yOCw1OC45NiAyOC4zOCw1OC4zNiAyOC40Niw1Ny43NiAyOC41NCw1Ny4xNiAyOC42Miw1Ni41NSAyOC42OSw1NS45NSAyOC43NSw1NS4zNSAyOC43OCw1NC43NSAyOC43OSw1NC4xNSAyOC43OCw1My41NSAyOC43Nyw1Mi45NCAyOC43Niw1Mi4zNCAyOC43NSw1MS43NCAyOC43Myw1MS4xNCAyOC43MSw1MC41NCAyOC43MSw0OS45NCAyOC43MSw0OS4zNCAyOC43Miw0OC43MyAyOC43Nyw0OC4xMyAyOC44MCw0Ny41MyAyOC44MCw0Ni45MyAyOC44MCw0Ni4zMyAyOC43OSw0NS43MyAyOC43MCw0NS4xMiAyOC42Myw0NC41MiAyOC42MCw0My45MiAyOC41Nyw0My4zMiAyOC41NCw0Mi43MiAyOC41Myw0Mi4xMiAyOC41NCw0MS41MSAyOC41Nyw0MC45MSAyOC42MCw0MC4zMSAyOC42MiwzOS43MSAyOC42NCwzOS4xMSAyOC42NywzOC41MSAyOC42OSwzNy45MCAyOC42NCwzNy41MSAyOC41MiwzNy41NiAyOC45NSwzNy40NiAyOS41NiwzNy4yNyAzMC4xNiwzNy4wNyAzMC43NSwzNi44NyAzMS4zNCwzNi42NyAzMS45MywzNi40OCAzMi41MywzNi4yNyAzMy4xMiwzNi4wMiAzMy43MCwzNS43NCAzNC4yOCwzNS40MyAzNC44NCwzNS4wNyAzNS4zOCwzNC42NyAzNS44NywzNC4yMiAzNi4zMCwzMy43MCAzNi42NCwzMy4xMiAzNi44OCwzMi40OSAzNy4wMSwzMS44MiAzNy4wNywzMS4xNSAzNy4xMSwzMC41MCAzNy4xNCwyOS44NiAzNy4xOCwyOS4yMyAzNy4yMSwyOC42MiAzNy4yMywyOC4wMSBaIE0gMzYuNTcsMjcuOTkgMzYuNjAsMjguNTggMzYuNjUsMjkuMTYgMzYuNjksMjkuNzcgMzYuNjcsMzAuMzggMzYuNTgsMzAuOTggMzYuNDEsMzEuNTcgMzYuMTgsMzIuMTQgMzUuOTEsMzIuNjkgMzUuNTksMzMuMjEgMzUuMjAsMzMuNjkgMzQuNzUsMzQuMTAgMzQuMjQsMzQuNDYgMzMuNzAsMzQuNzQgMzMuMTQsMzQuOTggMzIuNTgsMzUuMTggMzIuMDQsMzUuMzcgMzEuNTIsMzUuNTkgMzEuMDEsMzUuODMgMzAuNTAsMzYuMDYgMjkuOTYsMzYuMjUgMjkuNDEsMzYuMzggMjguODUsMzYuNDYgMjguMTMsMzYuNTUgMjcuNTksMzcuMTcgMjcuNjMsMzcuOTAgMjcuNjksMzguNTEgMjcuNzMsMzkuMTEgMjcuNzMsMzkuNzEgMjcuNzAsNDAuMzEgMjcuNjgsNDAuOTEgMjcuNjQsNDEuNTEgMjcuNTksNDIuMTIgMjcuNTIsNDIuNzIgMjcuNDYsNDMuMzIgMjcuNDAsNDMuOTIgMjcuMzcsNDQuNTIgMjcuMzAsNDUuMTIgMjcuMjEsNDUuNzMgMjcuMjAsNDYuMzMgMjcuMjAsNDYuOTMgMjcuMjAsNDcuNTMgMjcuMjIsNDguMTMgMjcuMjcsNDguNzMgMjcuMjgsNDkuMzQgMjcuMjksNDkuOTQgMjcuMzIsNTAuNTQgMjcuMzYsNTEuMTQgMjcuNDAsNTEuNzQgMjcuNDYsNTIuMzQgMjcuNTIsNTIuOTQgMjcuNTYsNTMuNTUgMjcuNTksNTQuMTUgMjcuNjIsNTQuNzUgMjcuNjEsNTUuMzUgMjcuNTgsNTUuOTUgMjcuNTEsNTYuNTUgMjcuNDEsNTcuMTYgMjcuMzEsNTcuNzYgMjcuMjMsNTguMzYgMjcuMTgsNTguOTYgMjcuMTksNTkuNTYgMjcuMjQsNjAuMTYgMjcuMjgsNjAuNzcgMjcuMzEsNjEuMzcgMjcuMzIsNjEuOTcgMjcuMzIsNjIuNTcgMjcuMzQsNjMuMTcgMjcuMzcsNjMuNzcgMjcuNDEsNjQuMzggMjcuNDQsNjQuOTggMjcuNDUsNjUuNTggMjcuNDMsNjYuMTggMjcuNDIsNjYuNzggMjcuNDEsNjcuMzggMjcuNDAsNjcuOTkgMjcuMzksNjguNTkgMjcuMzksNjkuMTkgMjcuMzksNjkuNzkgMjcuMzksNzAuMzkgMjcuMzcsNzAuOTkgMjcuMzMsNzEuNjAgMjcuMjYsNzIuMjAgMjcuMjAsNzIuODAgMjcuMTYsNzMuNDAgMjcuMTIsNzQuMDAgMjcuMDgsNzQuNjAgMjcuMDMsNzUuMjEgMjcuMDAsNzUuODEgMjYuOTgsNzYuNDEgMjcuMDAsNzcuMDEgMjcuMDQsNzcuNjEgMjcuMTEsNzguMjEgMjcuMjAsNzguODIgMjcuMjksNzkuNDIgMjcuMzcsODAuMDIgMjcuNDMsODAuNjIgMjcuNDUsODEuMjIgMjcuNDUsODEuODIgMjcuNDMsODIuNDMgMjcuMzgsODMuMDMgMjcuMzIsODMuNjMgMjcuMjYsODQuMjMgMjcuMjIsODQuODMgMjcuMTksODUuNDMgMjcuMTcsODYuMDQgMjcuMTYsODYuNjQgMjcuMTUsODcuMjQgMjcuMTIsODcuODQgMjcuMDgsODguNDQgMjcuMDcsODkuMDQgMjcuMDEsODkuNjUgMjYuOTQsOTAuMjUgMjYuODcsOTAuODUgMjYuODIsOTEuNDUgMjYuODEsOTIuMDUgMjYuODcsOTIuOTUgMjcuNzksOTQuMDIgMjguNzUsOTQuMDkgMjkuMjksOTQuMTAgMjkuODMsOTQuMTMgMzAuMzgsOTQuMjAgMzAuOTIsOTQuMzEgMzEuNDQsOTQuNDggMzEuOTUsOTQuNzAgMzIuNDUsOTQuOTUgMzIuOTQsOTUuMjMgMzMuNDEsOTUuNTQgMzMuODYsOTUuODggMzQuMzAsOTYuMjUgMzQuNzAsOTYuNjUgMzUuMDcsOTcuMDkgMzUuNDEsOTcuNTYgMzUuNzIsOTguMDUgMzUuOTksOTguNTcgMzYuMjEsOTkuMTAgMzYuMzgsOTkuNjYgMzYuNTAsMTAwLjIzIDM2LjYxLDEwMC44MCAzNi43MSwxMDEuMzcgMzYuODQsMTAyLjEwIDM3LjU1LDEwMi4xNyAzOC4xNiwxMDIuMTUgMzguNzYsMTAyLjE3IDM5LjM2LDEwMi4yMSAzOS45NiwxMDIuMjYgNDAuNTcsMTAyLjMzIDQxLjE3LDEwMi4zOSA0MS43NywxMDIuNDQgNDIuMzcsMTAyLjQ4IDQyLjk3LDEwMi41MSA0My41NywxMDIuNTMgNDQuMTgsMTAyLjUzIDQ0Ljc4LDEwMi41MSA0NS4zOCwxMDIuNDcgNDUuOTgsMTAyLjQzIDQ2LjU4LDEwMi4zOSA0Ny4xOCwxMDIuMzYgNDcuNzksMTAyLjM0IDQ4LjM5LDEwMi4zMyA0OC45OSwxMDIuMzUgNDkuNTksMTAyLjM4IDUwLjE5LDEwMi40MCA1MC43OSwxMDIuNDIgNTEuNDAsMTAyLjQ0IDUyLjAwLDEwMi40NSA1Mi42MCwxMDIuNDUgNTMuMjAsMTAyLjQyIDUzLjgwLDEwMi4zNyA1NC40MCwxMDIuMzMgNTUuMDEsMTAyLjM1IDU1LjYxLDEwMi4zOSA1Ni4yMSwxMDIuNDUgNTYuODEsMTAyLjUxIDU3LjQxLDEwMi41OCA1OC4wMSwxMDIuNjYgNTguNjEsMTAyLjcyIDU5LjIyLDEwMi43NSA1OS44MiwxMDIuNzUgNjAuNDIsMTAyLjY5IDYxLjAyLDEwMi42MCA2MS42MiwxMDIuNTEgNjIuMjIsMTAyLjQ0IDYyLjgzLDEwMi40MCA2My40MywxMDIuMzggNjQuMDMsMTAyLjM3IDY0LjYzLDEwMi4zNyA2NS4yMywxMDIuNDAgNjUuODMsMTAyLjQ0IDY2LjQ0LDEwMi40OSA2Ny4wNCwxMDIuNTQgNjcuNjQsMTAyLjU3IDY4LjI0LDEwMi41OSA2OC44NCwxMDIuNjAgNjkuNDQsMTAyLjYyIDcwLjA1LDEwMi42NCA3MC42NSwxMDIuNjMgNzEuMjUsMTAyLjYxIDcxLjg1LDEwMi41NiA3Mi40NSwxMDIuNTEgNzMuMDUsMTAyLjQ2IDczLjY2LDEwMi40MSA3NC4yNiwxMDIuMzggNzQuODYsMTAyLjM5IDc1LjQ2LDEwMi40MyA3Ni4wNiwxMDIuNDUgNzYuNjYsMTAyLjQzIDc3LjI3LDEwMi4zOSA3Ny44NywxMDIuMzUgNzguNDcsMTAyLjMxIDc5LjA3LDEwMi4zMCA3OS42NywxMDIuMzEgODAuMjcsMTAyLjMzIDgwLjg4LDEwMi4zNSA4MS40OCwxMDIuMzUgODIuMDgsMTAyLjM0IDgyLjY4LDEwMi4zMiA4My4yOCwxMDIuMzIgODMuODgsMTAyLjM0IDg0LjQ5LDEwMi4zNiA4NS4wOSwxMDIuMzcgODUuNjksMTAyLjM3IDg2LjI5LDEwMi4zOCA4Ni44OSwxMDIuMzkgODcuNDksMTAyLjQwIDg4LjEwLDEwMi40MCA4OC43MCwxMDIuMzggODkuMzAsMTAyLjM3IDg5LjkwLDEwMi4zNSA5MC41MCwxMDIuMzQgOTEuMTAsMTAyLjMyIDkxLjcxLDEwMi4zMCA5Mi4zMSwxMDIuMzEgOTIuOTEsMTAyLjM2IDkzLjUxLDEwMi40MyA5NC4xMSwxMDIuNTEgOTQuNzEsMTAyLjU5IDk1LjMyLDEwMi42NSA5NS45MiwxMDIuNzAgOTYuNTIsMTAyLjc1IDk3LjEyLDEwMi43OCA5Ny43MiwxMDIuODEgOTguMzIsMTAyLjg0IDk4LjkyLDEwMi44OSA5OS41MywxMDIuOTUgMTAwLjEzLDEwMi45OSAxMDAuNzMsMTAzLjAxIDEwMS4zMywxMDMuMDIgMTAxLjkzLDEwMy4wMSAxMDIuNTMsMTAzLjAwIDEwMy4xNCwxMDIuOTcgMTAzLjc0LDEwMi45MyAxMDQuMzQsMTAyLjg3IDEwNC45NCwxMDIuODAgMTA1LjU0LDEwMi43NSAxMDYuMTQsMTAyLjcwIDEwNi43NSwxMDIuNjggMTA3LjM1LDEwMi42OCAxMDcuOTUsMTAyLjcxIDEwOC41NSwxMDIuNzUgMTA5LjE1LDEwMi44MSAxMDkuNzUsMTAyLjg2IDExMC4zNiwxMDIuOTEgMTEwLjk2LDEwMi45NiAxMTEuNTYsMTAyLjk5IDExMi4xNiwxMDMuMDEgMTEyLjc2LDEwMi45OCAxMTMuMzYsMTAyLjkzIDExMy45NywxMDIuODggMTE0LjU3LDEwMi44NSAxMTUuMTcsMTAyLjgzIDExNS43NywxMDIuODEgMTE2LjM3LDEwMi43OCAxMTYuOTcsMTAyLjc1IDExNy41OCwxMDIuNzUgMTE4LjE4LDEwMi43NSAxMTguNzgsMTAyLjc0IDExOS4zOCwxMDIuNzAgMTE5Ljk4LDEwMi42NSAxMjAuNTgsMTAyLjYwIDEyMS4xOSwxMDIuNTYgMTIxLjc5LDEwMi41MiAxMjIuMzksMTAyLjQ3IDEyMi45OSwxMDIuNDMgMTIzLjU5LDEwMi40MCAxMjQuMTksMTAyLjM4IDEyNC44MCwxMDIuMzcgMTI1LjQwLDEwMi4zNSAxMjYuMDAsMTAyLjMzIDEyNi42MCwxMDIuMzAgMTI3LjIwLDEwMi4zMCAxMjcuODAsMTAyLjMxIDEyOC40MSwxMDIuMzMgMTI5LjAxLDEwMi4zMiAxMjkuNjEsMTAyLjMwIDEzMC4yMSwxMDIuMjcgMTMwLjgxLDEwMi4yNyAxMzEuNDEsMTAyLjI5IDEzMi4wMiwxMDIuMzIgMTMyLjYyLDEwMi4zNiAxMzMuMjIsMTAyLjM5IDEzMy44MiwxMDIuNDAgMTM0LjQyLDEwMi40MSAxMzUuMDIsMTAyLjQ0IDEzNS42MywxMDIuNDkgMTM2LjIzLDEwMi41OCAxMzYuODMsMTAyLjY3IDEzNy40MywxMDIuNzYgMTM4LjAzLDEwMi44MiAxMzguNjMsMTAyLjg0IDEzOS4yNCwxMDIuODAgMTM5Ljg0LDEwMi43NCAxNDAuNDQsMTAyLjcxIDE0MS4wNCwxMDIuNzIgMTQxLjY0LDEwMi43NSAxNDIuMjQsMTAyLjc3IDE0Mi44NCwxMDIuNzcgMTQzLjQ1LDEwMi43NCAxNDQuMDUsMTAyLjcxIDE0NC42NSwxMDIuNjggMTQ1LjI1LDEwMi42NCAxNDUuODUsMTAyLjU5IDE0Ni40NSwxMDIuNTQgMTQ3LjA2LDEwMi40OSAxNDcuNjYsMTAyLjQzIDE0OC4yNiwxMDIuMzUgMTQ4Ljg2LDEwMi4yNyAxNDkuNDYsMTAyLjIzIDE1MC4wNiwxMDIuMjUgMTUwLjY3LDEwMi4zMSAxNTEuMjcsMTAyLjQxIDE1MS44NywxMDIuNTMgMTUyLjQ3LDEwMi42NCAxNTMuMDcsMTAyLjczIDE1My42NywxMDIuODAgMTU0LjI4LDEwMi44NCAxNTQuODgsMTAyLjg3IDE1NS40OCwxMDIuODcgMTU2LjA4LDEwMi44NyAxNTYuNjgsMTAyLjg1IDE1Ny4yOCwxMDIuODEgMTU3Ljg5LDEwMi43NyAxNTguNDksMTAyLjcyIDE1OS4wOSwxMDIuNjggMTU5LjY5LDEwMi42NiAxNjAuMjksMTAyLjYzIDE2MC44OSwxMDIuNjAgMTYxLjUwLDEwMi41NCAxNjIuMTAsMTAyLjQ5IDE2Mi44MywxMDIuMzkgMTYzLjMyLDEwMS44MiAxNjMuMzIsMTAxLjEzIDE2My4zNSwxMDAuNTQgMTYzLjQ4LDk5Ljk3IDE2My42OCw5OS40MiAxNjMuOTQsOTguODkgMTY0LjIzLDk4LjM5IDE2NC41Niw5Ny45MiAxNjQuOTIsOTcuNDggMTY1LjMyLDk3LjA4IDE2NS43NCw5Ni43MCAxNjYuMTYsOTYuMzUgMTY2LjU4LDk2LjAxIDE2Ny4wMCw5NS42NyAxNjcuNDEsOTUuMzEgMTY3LjgxLDk0LjkzIDE2OC4yMyw5NC41NCAxNjguNjgsOTQuMTcgMTY5LjE3LDkzLjg0IDE2OS42OSw5My41NyAxNzAuMjQsOTMuMzYgMTcwLjgyLDkzLjIwIDE3MS40MSw5My4xMCAxNzIuMDYsOTMuMDUgMTcyLjA5LDkyLjQwIDE3Mi4xMiw5MS44MCAxNzIuMTUsOTEuMTkgMTcyLjIwLDkwLjU5IDE3Mi4yMyw4OS45OSAxNzIuMjYsODkuMzkgMTcyLjI1LDg4Ljc5IDE3Mi4yMiw4OC4xOSAxNzIuMjAsODcuNTggMTcyLjE5LDg2Ljk4IDE3Mi4yMCw4Ni4zOCAxNzIuMTksODUuNzggMTcyLjIyLDg1LjE4IDE3Mi4yNSw4NC41OCAxNzIuMjcsODMuOTcgMTcyLjI4LDgzLjM3IDE3Mi4yOCw4Mi43NyAxNzIuMzAsODIuMTcgMTcyLjMyLDgxLjU3IDE3Mi40MCw4MC45NyAxNzIuNDksODAuMzYgMTcyLjU3LDc5Ljc2IDE3Mi42NSw3OS4xNiAxNzIuNzMsNzguNTYgMTcyLjc5LDc3Ljk2IDE3Mi44Myw3Ny4zNiAxNzIuODIsNzYuNzUgMTcyLjc5LDc2LjE1IDE3Mi43NCw3NS41NSAxNzIuNjksNzQuOTUgMTcyLjYyLDc0LjM1IDE3Mi41Niw3My43NSAxNzIuNTEsNzMuMTQgMTcyLjUwLDcyLjU0IDE3Mi41MCw3MS45NCAxNzIuNTEsNzEuMzQgMTcyLjUzLDcwLjc0IDE3Mi41Myw3MC4xNCAxNzIuNTIsNjkuNTMgMTcyLjUwLDY4LjkzIDE3Mi40OCw2OC4zMyAxNzIuNDgsNjcuNzMgMTcyLjQ2LDY3LjEzIDE3Mi40NCw2Ni41MyAxNzIuNDMsNjUuOTIgMTcyLjQ0LDY1LjMyIDE3Mi40Nyw2NC43MiAxNzIuNTEsNjQuMTIgMTcyLjU1LDYzLjUyIDE3Mi41Nyw2Mi45MiAxNzIuNjEsNjIuMzEgMTcyLjY1LDYxLjcxIDE3Mi42OSw2MS4xMSAxNzIuNzMsNjAuNTEgMTcyLjc2LDU5LjkxIDE3Mi43OCw1OS4zMSAxNzIuODEsNTguNzAgMTcyLjgzLDU4LjEwIDE3Mi44NSw1Ny41MCAxNzIuODUsNTYuOTAgMTcyLjg1LDU2LjMwIDE3Mi44NCw1NS43MCAxNzIuODUsNTUuMTAgMTcyLjg2LDU0LjQ5IDE3Mi44Nyw1My44OSAxNzIuODcsNTMuMjkgMTcyLjg0LDUyLjY5IDE3Mi44MCw1Mi4wOSAxNzIuNzgsNTEuNDkgMTcyLjc3LDUwLjg4IDE3Mi43Niw1MC4yOCAxNzIuNzMsNDkuNjggMTcyLjY5LDQ5LjA4IDE3Mi42Miw0OC40OCAxNzIuNTQsNDcuODggMTcyLjQ2LDQ3LjI3IDE3Mi40Miw0Ni42NyAxNzIuNDEsNDYuMDcgMTcyLjQ0LDQ1LjQ3IDE3Mi40Niw0NC44NyAxNzIuNDgsNDQuMjcgMTcyLjUyLDQzLjY2IDE3Mi42MCw0My4wNiAxNzIuNjUsNDIuNDYgMTcyLjY1LDQxLjg2IDE3Mi42NSw0MS4yNiAxNzIuNjMsNDAuNjYgMTcyLjU3LDQwLjA1IDE3Mi41MywzOS40NSAxNzIuNTMsMzguODUgMTcyLjU0LDM4LjI1IDE3Mi41NCwzNy42NSAxNzIuNDIsMzYuNjkgMTcxLjUwLDM2LjQ0IDE3MC45MiwzNi4zOSAxNzAuMzYsMzYuMzAgMTY5LjgwLDM2LjE4IDE2OS4yNiwzNi4wMyAxNjguNzIsMzUuODYgMTY4LjE5LDM1LjY0IDE2Ny42OSwzNS4zNSAxNjcuMjMsMzUuMDIgMTY2LjgwLDM0LjY1IDE2Ni40MCwzNC4yNiAxNjYuMDMsMzMuODQgMTY1LjcwLDMzLjM4IDE2NS40NCwzMi44OCAxNjUuMTksMzIuNDAgMTY0Ljk3LDMxLjkwIDE2NC43OSwzMS4zOSAxNjQuNjQsMzAuODggMTY0LjUxLDMwLjM2IDE2NC40MCwyOS44NSAxNjQuMjksMjkuMzQgMTY0LjE4LDI4LjgzIDE2NC4wNCwyOC4wMSAxNjMuMTIsMjcuMDUgMTYyLjE0LDI3LjAyIDE2MS41NCwyNy4wNyAxNjAuOTQsMjcuMTEgMTYwLjM0LDI3LjE1IDE1OS43NCwyNy4yMiAxNTkuMTMsMjcuMjkgMTU4LjUzLDI3LjM1IDE1Ny45MywyNy4zOCAxNTcuMzMsMjcuMzcgMTU2LjczLDI3LjM1IDE1Ni4xMywyNy4zNCAxNTUuNTIsMjcuMzYgMTU0LjkyLDI3LjM5IDE1NC4zMiwyNy40MSAxNTMuNzIsMjcuNDEgMTUzLjEyLDI3LjM5IDE1Mi41MiwyNy4zOCAxNTEuOTEsMjcuMzYgMTUxLjMxLDI3LjMzIDE1MC43MSwyNy4zMCAxNTAuMTEsMjcuMjUgMTQ5LjUxLDI3LjIxIDE0OC45MSwyNy4yMCAxNDguMzAsMjcuMjIgMTQ3LjcwLDI3LjI4IDE0Ny4xMCwyNy4zNSAxNDYuNTAsMjcuNDMgMTQ1LjkwLDI3LjUxIDE0NS4zMCwyNy41OSAxNDQuNjksMjcuNjcgMTQ0LjA5LDI3LjcyIDE0My40OSwyNy43NSAxNDIuODksMjcuNzYgMTQyLjI5LDI3Ljc3IDE0MS42OSwyNy43OCAxNDEuMDgsMjcuNzkgMTQwLjQ4LDI3LjgwIDEzOS44OCwyNy44MSAxMzkuMjgsMjcuODAgMTM4LjY4LDI3Ljc4IDEzOC4wOCwyNy43NCAxMzcuNDcsMjcuNzAgMTM2Ljg3LDI3LjY2IDEzNi4yNywyNy42NCAxMzUuNjcsMjcuNjQgMTM1LjA3LDI3LjY0IDEzNC40NywyNy42NCAxMzMuODYsMjcuNjEgMTMzLjI2LDI3LjU4IDEzMi42NiwyNy41NSAxMzIuMDYsMjcuNTMgMTMxLjQ2LDI3LjU0IDEzMC44NiwyNy41NSAxMzAuMjUsMjcuNTcgMTI5LjY1LDI3LjU3IDEyOS4wNSwyNy41NyAxMjguNDUsMjcuNTggMTI3Ljg1LDI3LjU5IDEyNy4yNSwyNy42MCAxMjYuNjQsMjcuNTkgMTI2LjA0LDI3LjU2IDEyNS40NCwyNy41MiAxMjQuODQsMjcuNDggMTI0LjI0LDI3LjQ0IDEyMy42NCwyNy40MCAxMjMuMDMsMjcuMzYgMTIyLjQzLDI3LjMzIDEyMS44MywyNy4zMSAxMjEuMjMsMjcuMjkgMTIwLjYzLDI3LjI3IDEyMC4wMywyNy4yNyAxMTkuNDMsMjcuMjYgMTE4LjgyLDI3LjI0IDExOC4yMiwyNy4yMiAxMTcuNjIsMjcuMjMgMTE3LjAyLDI3LjMwIDExNi40MiwyNy40MCAxMTUuODIsMjcuNDggMTE1LjIxLDI3LjUxIDExNC42MSwyNy40NyAxMTQuMDEsMjcuNDIgMTEzLjQxLDI3LjM4IDExMi44MSwyNy4zOCAxMTIuMjEsMjcuMzggMTExLjYwLDI3LjM5IDExMS4wMCwyNy40MCAxMTAuNDAsMjcuNDMgMTA5LjgwLDI3LjQ4IDEwOS4yMCwyNy41MiAxMDguNjAsMjcuNTYgMTA3Ljk5LDI3LjYwIDEwNy4zOSwyNy42NCAxMDYuNzksMjcuNjggMTA2LjE5LDI3LjY5IDEwNS41OSwyNy42NyAxMDQuOTksMjcuNjIgMTA0LjM4LDI3LjU1IDEwMy43OCwyNy41MCAxMDMuMTgsMjcuNDYgMTAyLjU4LDI3LjQzIDEwMS45OCwyNy40MSAxMDEuMzgsMjcuNDAgMTAwLjc3LDI3LjQwIDEwMC4xNywyNy40MSA5OS41NywyNy40MyA5OC45NywyNy40NSA5OC4zNywyNy40NiA5Ny43NywyNy40NSA5Ny4xNiwyNy40MyA5Ni41NiwyNy40MyA5NS45NiwyNy40NSA5NS4zNiwyNy41MCA5NC43NiwyNy41NCA5NC4xNiwyNy41NCA5My41NSwyNy40OSA5Mi45NSwyNy40MSA5Mi4zNSwyNy4zMyA5MS43NSwyNy4yNyA5MS4xNSwyNy4yNCA5MC41NSwyNy4yMiA4OS45NCwyNy4yMiA4OS4zNCwyNy4yMiA4OC43NCwyNy4yMiA4OC4xNCwyNy4yMiA4Ny41NCwyNy4yMiA4Ni45NCwyNy4yMiA4Ni4zMywyNy4xOSA4NS43MywyNy4xNSA4NS4xMywyNy4xMSA4NC41MywyNy4xMCA4My45MywyNy4xMiA4My4zMywyNy4xNiA4Mi43MiwyNy4yMSA4Mi4xMiwyNy4yNSA4MS41MiwyNy4yOSA4MC45MiwyNy4zMiA4MC4zMiwyNy4zNSA3OS43MiwyNy4zNiA3OS4xMiwyNy4zNSA3OC41MSwyNy4zMyA3Ny45MSwyNy4zMSA3Ny4zMSwyNy4yOCA3Ni43MSwyNy4yNyA3Ni4xMSwyNy4yNyA3NS41MSwyNy4yOCA3NC45MCwyNy4yOSA3NC4zMCwyNy4zMiA3My43MCwyNy4zOCA3My4xMCwyNy40NiA3Mi41MCwyNy41MiA3MS45MCwyNy41OCA3MS4yOSwyNy42MiA3MC42OSwyNy42NiA3MC4wOSwyNy43MCA2OS40OSwyNy43MSA2OC44OSwyNy43MCA2OC4yOSwyNy42NyA2Ny42OCwyNy42NiA2Ny4wOCwyNy42OSA2Ni40OCwyNy43MyA2NS44OCwyNy43NiA2NS4yOCwyNy43NiA2NC42OCwyNy43MyA2NC4wNywyNy42OSA2My40NywyNy42NiA2Mi44NywyNy42NiA2Mi4yNywyNy42NyA2MS42NywyNy42OSA2MS4wNywyNy43MCA2MC40NiwyNy43MSA1OS44NiwyNy43MCA1OS4yNiwyNy42OCA1OC42NiwyNy42NiA1OC4wNiwyNy42NCA1Ny40NiwyNy42MiA1Ni44NSwyNy42MSA1Ni4yNSwyNy42MSA1NS42NSwyNy42MyA1NS4wNSwyNy42NCA1NC40NSwyNy42NiA1My44NSwyNy42OCA1My4yNCwyNy42OSA1Mi42NCwyNy43MiA1Mi4wNCwyNy43MyA1MS40NCwyNy43MCA1MC44NCwyNy42MyA1MC4yNCwyNy41MyA0OS42MywyNy40MiA0OS4wMywyNy4zMyA0OC40MywyNy4yOSA0Ny44MywyNy4yNyA0Ny4yMywyNy4yOCA0Ni42MywyNy4zMCA0Ni4wMiwyNy4zMyA0NS40MiwyNy4zNyA0NC44MiwyNy40MSA0NC4yMiwyNy40NiA0My42MiwyNy41MSA0My4wMiwyNy41NiA0Mi40MSwyNy42MSA0MS44MSwyNy42NCA0MS4yMSwyNy42NCA0MC42MSwyNy42MSA0MC4wMSwyNy41NiAzOS40MSwyNy41NSAzOC44MCwyNy41OSAzOC4yMCwyNy42NiAzNy42MCwyNy43NCAzNy4wMCwyNy43NyBaIi8+PHBhdGggZmlsbD0iIzVhM2YyYyIgZD0iTSAyNiwyMyBsIDMsMyBsIC0zLDMgbCAtMywtMyB6Ii8+PHBhdGggZmlsbD0iIzVhM2YyYyIgZD0iTSAxNzQsMjMgbCAzLDMgbCAtMywzIGwgLTMsLTMgeiIvPjxwYXRoIGZpbGw9IiM1YTNmMmMiIGQ9Ik0gMjYsMTAxIGwgMywzIGwgLTMsMyBsIC0zLC0zIHoiLz48cGF0aCBmaWxsPSIjNWEzZjJjIiBkPSJNIDE3NCwxMDEgbCAzLDMgbCAtMywzIGwgLTMsLTMgeiIvPjwvc3ZnPg==\");\n  --offstage-i-input-orn-bot: url(\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNDAiIGhlaWdodD0iMzAiIHZpZXdCb3g9IjAgMCAxNDAgMzAiPjxwYXRoIGZpbGw9IiM1YTNmMmMiIGQ9Ik0gMTQuODcsMTAuMzggMTUuNjcsMTAuNjUgMTYuNDYsMTAuOTMgMTcuMjIsMTEuMjcgMTcuOTgsMTEuNjAgMTguNzUsMTEuODkgMTkuNTQsMTIuMDkgMjAuMzEsMTIuMzAgMjEuMDgsMTIuNTIgMjEuODQsMTIuNzQgMjIuNTksMTIuOTQgMjMuMzQsMTMuMTMgMjQuMTAsMTMuMjggMjQuODUsMTMuNDEgMjUuNjAsMTMuNTMgMjYuMzQsMTMuNjQgMjcuMDgsMTMuNzEgMjcuODAsMTMuODMgMjguNTEsMTMuOTggMjkuMjEsMTQuMTIgMjkuOTEsMTQuMjUgMzAuNjEsMTQuMzggMzEuMjksMTQuNTAgMzEuOTcsMTQuNjIgMzIuNjQsMTQuNzggMzMuMjksMTUuMDEgMzMuOTMsMTUuMjggMzQuNTcsMTUuNTUgMzUuMjEsMTUuODAgMzUuODUsMTYuMDIgMzYuNDksMTYuMTcgMzcuMTQsMTYuMjYgMzcuNzgsMTYuMzEgMzguNDIsMTYuMzMgMzkuMDUsMTYuMzIgMzkuNjgsMTYuMjkgNDAuMzAsMTYuMjkgNDAuOTIsMTYuMzAgNDEuNTMsMTYuMzEgNDIuMTMsMTYuMjkgNDIuNzMsMTYuMjIgNDMuMzIsMTYuMTMgNDMuOTAsMTYuMDQgNDQuNDgsMTUuOTYgNDUuMDUsMTUuOTEgNDUuNjIsMTUuOTAgNDYuMTgsMTUuOTAgNDYuNzQsMTUuODcgNDcuMjksMTUuODIgNDcuODQsMTUuNzYgNDguMzgsMTUuNzEgNDguOTIsMTUuNjYgNDkuNDUsMTUuNTkgNDkuOTcsMTUuNDkgNTAuNDksMTUuMzcgNTAuOTksMTUuMjMgNTEuNDksMTUuMDcgNTEuOTcsMTQuOTAgNTIuNDYsMTQuNzMgNTIuOTQsMTQuNTkgNTMuNDIsMTQuNDkgNTMuOTEsMTQuNDAgNTQuNDEsMTQuMzYgNTQuOTEsMTQuMzUgNTUuNDIsMTQuMzMgNTUuOTAsMTQuMjYgNTYuMzcsMTQuMTQgNTYuODMsMTMuOTkgNTcuMjcsMTMuODIgNTcuNzIsMTMuNjUgNTguMTUsMTMuNDYgNTguNTIsMTMuMTQgNTguODYsMTIuNzcgNTkuMTgsMTIuMzggNTkuNTUsMTIuMDkgNTkuOTMsMTEuODcgNTkuNzcsMTEuNTMgNTkuMzgsMTEuNzQgNTguOTgsMTEuOTQgNTguNTUsMTIuMDcgNTguMTMsMTIuMjMgNTcuNzMsMTIuNDMgNTcuMzUsMTIuNzIgNTYuOTUsMTIuOTYgNTYuNTIsMTMuMTAgNTYuMDUsMTMuMTcgNTUuNTYsMTMuMjAgNTUuMDgsMTMuMjQgNTQuNjEsMTMuMzAgNTQuMTQsMTMuMzggNTMuNjcsMTMuNDYgNTMuMjAsMTMuNTcgNTIuNzQsMTMuNzMgNTIuMjgsMTMuOTIgNTEuODIsMTQuMTEgNTEuMzQsMTQuMzAgNTAuODYsMTQuNDkgNTAuMzcsMTQuNjUgNDkuODcsMTQuNzcgNDkuMzUsMTQuODIgNDguODIsMTQuODQgNDguMjksMTQuODUgNDcuNzUsMTQuODIgNDcuMjEsMTQuNzcgNDYuNjYsMTQuNzIgNDYuMTEsMTQuNzEgNDUuNTYsMTQuNzUgNDUuMDEsMTQuODIgNDQuNDUsMTQuOTEgNDMuODksMTQuOTggNDMuMzIsMTUuMDYgNDIuNzQsMTUuMTEgNDIuMTUsMTUuMTUgNDEuNTYsMTUuMTcgNDAuOTYsMTUuMTYgNDAuMzYsMTUuMTMgMzkuNzUsMTUuMTAgMzkuMTQsMTUuMDQgMzguNTMsMTQuOTcgMzcuOTAsMTQuOTMgMzcuMjcsMTQuODkgMzYuNjMsMTQuODYgMzUuOTksMTQuODEgMzUuMzQsMTQuNzQgMzQuNzAsMTQuNjQgMzQuMDQsMTQuNTIgMzMuMzksMTQuMzkgMzIuNzMsMTQuMjUgMzIuMDYsMTQuMDkgMzEuMzksMTMuOTcgMzAuNzEsMTMuODUgMzAuMDIsMTMuNzIgMjkuMzIsMTMuNTkgMjguNjIsMTMuNDUgMjcuOTIsMTMuMzAgMjcuMjIsMTMuMTEgMjYuNTMsMTIuODUgMjUuODIsMTIuNjIgMjUuMTEsMTIuNDAgMjQuMzgsMTIuMTkgMjMuNjUsMTIuMDAgMjIuOTAsMTEuODIgMjIuMTUsMTEuNjQgMjEuMzksMTEuNDQgMjAuNjQsMTEuMjIgMTkuODcsMTEuMDEgMTkuMDksMTAuNzkgMTguMjgsMTAuNjggMTcuNDUsMTAuNTkgMTYuNjEsMTAuNDggMTUuODAsMTAuMjggMTQuOTksMTAuMDIgWiIvPjxwYXRoIGZpbGw9IiM1YTNmMmMiIGQ9Ik0gMTI0Ljk2LDkuODcgMTI0LjE2LDEwLjE3IDEyMy4zNywxMC40MyAxMjIuNTYsMTAuNjEgMTIxLjc1LDEwLjc3IDEyMC45NSwxMC45NCAxMjAuMTksMTEuMjEgMTE5LjQ0LDExLjQ2IDExOC42NywxMS42NyAxMTcuOTAsMTEuODIgMTE3LjEzLDExLjkzIDExNi4zNiwxMi4wNCAxMTUuNjEsMTIuMTcgMTE0Ljg4LDEyLjMzIDExNC4xNSwxMi40OCAxMTMuNDIsMTIuNjIgMTEyLjcwLDEyLjc1IDExMS45OSwxMi45MCAxMTEuMzAsMTMuMDkgMTEwLjYzLDEzLjM0IDEwOS45NiwxMy41OCAxMDkuMjksMTMuODAgMTA4LjYxLDEzLjk3IDEwNy45NCwxNC4xMiAxMDcuMjcsMTQuMjMgMTA2LjYwLDE0LjI5IDEwNS45MywxNC4zMSAxMDUuMjYsMTQuMzAgMTA0LjYwLDE0LjMwIDEwMy45NSwxNC4zMyAxMDMuMzIsMTQuNDAgMTAyLjY5LDE0LjUxIDEwMi4wNywxNC42MyAxMDEuNDYsMTQuNzQgMTAwLjg0LDE0LjgzIDEwMC4yNCwxNC45MSA5OS42MywxNS4wMCA5OS4wMywxNS4wOCA5OC40NCwxNS4xMyA5Ny44NSwxNS4xMSA5Ny4yNiwxNS4wMSA5Ni42OSwxNC44NiA5Ni4xMiwxNC43MCA5NS41NiwxNC41NiA5NS4wMCwxNC41MCA5NC40NSwxNC41MSA5My45MCwxNC41NCA5My4zNSwxNC41NCA5Mi44MSwxNC41MyA5Mi4yOCwxNC41MSA5MS43NSwxNC41MCA5MS4yMiwxNC40OSA5MC43MSwxNC40MiA5MC4yMCwxNC4zMyA4OS42OSwxNC4yNSA4OS4xOSwxNC4xOCA4OC42OSwxNC4xMiA4OC4xOSwxNC4wNiA4Ny43MCwxMy45OSA4Ny4yMSwxMy45MyA4Ni43MywxMy44NiA4Ni4yNSwxMy43OCA4NS43NywxMy43MSA4NS4yOSwxMy42NCA4NC44MiwxMy41NyA4NC4zNCwxMy40OSA4My44OCwxMy4zOSA4My40MywxMy4yNiA4My4wMCwxMy4wOSA4Mi41OSwxMi44NiA4Mi4yMSwxMi41OSA4MS44MCwxMi4zOCA4MS40MSwxMi4xNiA4MS4wMSwxMS45NiA4MC42NCwxMS43MSA4MC4yNiwxMS40OCA4MC4wNywxMS44NSA4MC40NiwxMi4wOCA4MC44MSwxMi4zOCA4MS4xMywxMi43OCA4MS40NiwxMy4yMCA4MS44MCwxMy42MCA4Mi4xOSwxMy44OCA4Mi42MiwxNC4xMSA4My4wNywxNC4yNyA4My41NSwxNC4zOCA4NC4wMywxNC40NyA4NC41MiwxNC41NSA4NS4wMSwxNC42MiA4NS41MCwxNC42OCA4NS45OSwxNC43NyA4Ni40NywxNC45MCA4Ni45NiwxNS4wNSA4Ny40NCwxNS4xOSA4Ny45NCwxNS4zMiA4OC40NSwxNS40MyA4OC45NiwxNS41MyA4OS40NywxNS42MiA5MC4wMCwxNS42OSA5MC41MywxNS43MiA5MS4wNywxNS43MSA5MS42MiwxNS42NyA5Mi4xNywxNS42MSA5Mi43MywxNS41MSA5My4yOSwxNS40MiA5My44NSwxNS4zOCA5NC40MCwxNS40MyA5NC45NiwxNS41NCA5NS41MywxNS42OCA5Ni4xMCwxNS43OSA5Ni42OCwxNS45MCA5Ny4yNywxNS45OSA5Ny44NywxNi4wNyA5OC40NywxNi4xNCA5OS4wOCwxNi4xNSA5OS42OSwxNi4xMSAxMDAuMzAsMTYuMDEgMTAwLjkxLDE1Ljg2IDEwMS41MywxNS43MCAxMDIuMTUsMTUuNTYgMTAyLjc5LDE1LjQ2IDEwMy40MywxNS40MCAxMDQuMDcsMTUuMzcgMTA0LjczLDE1LjM1IDEwNS40MCwxNS4zMyAxMDYuMDcsMTUuMzAgMTA2Ljc1LDE1LjI4IDEwNy40NCwxNS4yNyAxMDguMTMsMTUuMjMgMTA4LjgyLDE1LjE0IDEwOS41MSwxNC45OSAxMTAuMjAsMTQuODMgMTEwLjkwLDE0LjY1IDExMS41OSwxNC40NSAxMTIuMjgsMTQuMjEgMTEyLjk4LDEzLjk1IDExMy42OCwxMy43MCAxMTQuNDEsMTMuNTQgMTE1LjE2LDEzLjQ1IDExNS45MywxMy40MCAxMTYuNzEsMTMuMzMgMTE3LjQ4LDEzLjIxIDExOC4yNSwxMy4wNCAxMTkuMDEsMTIuODQgMTE5Ljc4LDEyLjYxIDEyMC41NSwxMi4zNyAxMjEuMzIsMTIuMTIgMTIyLjA2LDExLjc1IDEyMi44MSwxMS4zNiAxMjMuNTYsMTAuOTcgMTI0LjM0LDEwLjY3IDEyNS4xNCwxMC40MCBaIi8+PHBhdGggZmlsbD0iIzVhM2YyYyIgZD0iTSA3MCw3IGwgMy41LDUgbCAtMy41LDUgbCAtMy41LC01IHoiLz48Y2lyY2xlIGZpbGw9IiM1YTNmMmMiIGN4PSI2IiBjeT0iMTAiIHI9IjEuNCIvPjxjaXJjbGUgZmlsbD0iIzVhM2YyYyIgY3g9IjEzNCIgY3k9IjEwIiByPSIxLjQiLz48L3N2Zz4=\");\n  --offstage-i-input-orn-top: url(\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCAyMDAgNDAiPjxwYXRoIGZpbGw9IiM1YTNmMmMiIGQ9Ik0gMzAuMTksMzAuNTMgMzAuOTQsMzAuMjMgMzEuNjgsMjkuOTAgMzIuNDIsMjkuNjEgMzMuMTYsMjkuMzAgMzMuOTAsMjkuMDIgMzQuNjIsMjguNzEgMzUuMzUsMjguNDMgMzYuMDgsMjguMTUgMzYuODEsMjcuOTIgMzcuNTYsMjcuNzQgMzguMzIsMjcuNjIgMzkuMDksMjcuNTUgMzkuODUsMjcuNDkgNDAuNjEsMjcuNDIgNDEuMzQsMjcuMzIgNDIuMDcsMjcuMTkgNDIuNzksMjcuMDYgNDMuNTEsMjYuOTYgNDQuMjQsMjYuOTAgNDQuOTcsMjYuODggNDUuNzAsMjYuODYgNDYuNDAsMjYuODAgNDcuMDksMjYuNjYgNDcuNzUsMjYuNDIgNDguMzksMjYuMTMgNDkuMDMsMjUuODIgNDkuNjcsMjUuNTQgNTAuMzIsMjUuMzAgNTAuOTgsMjUuMTEgNTEuNjMsMjQuOTcgNTIuMjksMjQuODMgNTIuOTMsMjQuNjUgNTMuNTcsMjQuNDYgNTQuMjEsMjQuMjkgNTQuODUsMjQuMTcgNTUuNDksMjQuMDggNTYuMTQsMjQuMDEgNTYuNzcsMjMuOTQgNTcuNDAsMjMuODUgNTguMDMsMjMuNzQgNTguNjUsMjMuNjYgNTkuMjcsMjMuNjIgNTkuODksMjMuNjIgNjAuNTEsMjMuNjIgNjEuMTIsMjMuNjAgNjEuNzMsMjMuNTQgNjIuMzMsMjMuNDggNjIuOTMsMjMuNDMgNjMuNTIsMjMuMzggNjQuMTEsMjMuMzIgNjQuNzAsMjMuMjYgNjUuMjgsMjMuMjAgNjUuODYsMjMuMTYgNjYuNDQsMjMuMjAgNjcuMDEsMjMuMjkgNjcuNTgsMjMuMzggNjguMTQsMjMuNDYgNjguNzAsMjMuNTIgNjkuMjUsMjMuNTYgNjkuODAsMjMuNTggNzAuMzUsMjMuNjAgNzAuODksMjMuNjQgNzEuNDMsMjMuNzAgNzEuOTYsMjMuNzggNzIuNDksMjMuODggNzMuMDEsMjQuMDAgNzMuNTIsMjQuMTIgNzQuMDQsMjQuMjIgNzQuNTUsMjQuMjggNzUuMDcsMjQuMzAgNzUuNTgsMjQuMjkgNzYuMTAsMjQuMjYgNzYuNjIsMjQuMjIgNzcuMTQsMjQuMTkgNzcuNjQsMjQuMjEgNzguMTMsMjQuMzEgNzguNjEsMjQuNDUgNzkuMDgsMjQuNTkgNzkuNTUsMjQuNzIgODAuMDIsMjQuODIgODAuNDksMjQuOTIgODAuOTYsMjUuMDIgODEuNDIsMjUuMTMgODEuODksMjUuMjIgODIuMzYsMjUuMjggODIuODMsMjUuMzUgODMuMzAsMjUuNDIgODMuNzUsMjUuNTEgODQuMjAsMjUuNjIgODQuNjUsMjUuNzQgODUuMDgsMjUuODggODUuNTMsMjUuOTggODUuOTcsMjYuMDkgODYuNDAsMjYuMjIgODYuODIsMjYuMzkgODcuMjMsMjYuNTcgODcuNjIsMjYuNzggODguMDEsMjYuOTggODguMTIsMjYuNzMgODcuNzIsMjYuNTUgODcuMzIsMjYuMzQgODYuOTUsMjYuMDkgODYuNTcsMjUuODIgODYuMjAsMjUuNTIgODUuODIsMjUuMjIgODUuNDIsMjQuOTYgODQuOTgsMjQuNzggODQuNTMsMjQuNjYgODQuMDYsMjQuNTggODMuNTgsMjQuNTEgODMuMTEsMjQuNDMgODIuNjQsMjQuMzMgODIuMTcsMjQuMjMgODEuNzAsMjQuMTAgODEuMjQsMjMuOTUgODAuNzcsMjMuODAgODAuMzAsMjMuNjUgNzkuODIsMjMuNTEgNzkuMzQsMjMuNDAgNzguODQsMjMuMzIgNzguMzQsMjMuMjQgNzcuODQsMjMuMTYgNzcuMzMsMjMuMTEgNzYuODAsMjMuMTEgNzYuMjgsMjMuMTUgNzUuNzQsMjMuMjMgNzUuMjAsMjMuMzIgNzQuNjcsMjMuMzggNzQuMTQsMjMuMzkgNzMuNjEsMjMuMzUgNzMuMDgsMjMuMzAgNzIuNTUsMjMuMjQgNzIuMDIsMjMuMTUgNzEuNDgsMjMuMDUgNzAuOTQsMjIuOTYgNzAuMzksMjIuODggNjkuODQsMjIuODIgNjkuMjksMjIuNzMgNjguNzMsMjIuNjIgNjguMTYsMjIuNTAgNjcuNTksMjIuNDAgNjcuMDIsMjIuMzUgNjYuNDQsMjIuMzIgNjUuODUsMjIuMzEgNjUuMjcsMjIuMjggNjQuNjcsMjIuMjIgNjQuMDcsMjIuMTYgNjMuNDcsMjIuMTEgNjIuODYsMjIuMDcgNjIuMjUsMjIuMDUgNjEuNjQsMjIuMDQgNjEuMDIsMjIuMDUgNjAuNDAsMjIuMTAgNTkuNzcsMjIuMTcgNTkuMTUsMjIuMjQgNTguNTIsMjIuMjkgNTcuODcsMjIuMjkgNTcuMjMsMjIuMjkgNTYuNTgsMjIuMzMgNTUuOTQsMjIuNDMgNTUuMzAsMjIuNTggNTQuNjYsMjIuNzYgNTQuMDEsMjIuOTQgNTMuMzYsMjMuMDcgNTIuNzAsMjMuMTggNTIuMDMsMjMuMjggNTEuMzYsMjMuMzkgNTAuNzAsMjMuNTggNTAuMDUsMjMuODQgNDkuNDAsMjQuMTQgNDguNzYsMjQuNDMgNDguMTAsMjQuNjkgNDcuNDMsMjQuOTEgNDYuNzQsMjUuMDkgNDYuMDUsMjUuMjUgNDUuMzYsMjUuNDMgNDQuNjcsMjUuNjIgNDMuOTcsMjUuNzkgNDMuMjYsMjUuOTMgNDIuNTMsMjYuMDUgNDEuODEsMjYuMjAgNDEuMTAsMjYuNDIgNDAuMzksMjYuNjMgMzkuNjYsMjYuODAgMzguOTEsMjYuOTIgMzguMTQsMjcuMDIgMzcuMzYsMjcuMDkgMzYuNTgsMjcuMTYgMzUuODAsMjcuMjcgMzUuMDUsMjcuNDcgMzQuMzIsMjcuNzggMzMuNjEsMjguMTUgMzIuOTIsMjguNTkgMzIuMjIsMjkuMDIgMzEuNTMsMjkuNDcgMzAuODAsMjkuODIgMzAuMDQsMzAuMTIgWiIvPjxwYXRoIGZpbGw9IiM1YTNmMmMiIGQ9Ik0gMTcwLjEwLDI5LjcyIDE2OS4zMywyOS40NiAxNjguNTcsMjkuMTggMTY3Ljg0LDI4LjgzIDE2Ny4xMiwyOC40OCAxNjYuMzksMjguMTQgMTY1LjYzLDI3LjkzIDE2NC44OCwyNy43MSAxNjQuMTQsMjcuNDUgMTYzLjQyLDI3LjE3IDE2Mi42OSwyNi45MCAxNjEuOTYsMjYuNjYgMTYxLjIzLDI2LjQ0IDE2MC41MCwyNi4yNCAxNTkuNzcsMjYuMDUgMTU5LjA1LDI1Ljg2IDE1OC4zNCwyNS42NCAxNTcuNjQsMjUuMzggMTU2Ljk1LDI1LjExIDE1Ni4yNiwyNC44NSAxNTUuNTcsMjQuNjIgMTU0Ljg3LDI0LjQxIDE1NC4xOCwyNC4yMiAxNTMuNDgsMjQuMDUgMTUyLjgwLDIzLjg2IDE1Mi4xMiwyMy42NiAxNTEuNDQsMjMuNDggMTUwLjc1LDIzLjMzIDE1MC4wNiwyMy4yNCAxNDkuMzcsMjMuMTcgMTQ4LjcwLDIzLjA4IDE0OC4wMywyMi45NCAxNDcuMzcsMjIuNzkgMTQ2LjcxLDIyLjY2IDE0Ni4wNCwyMi41NyAxNDUuMzgsMjIuNTQgMTQ0LjcxLDIyLjUzIDE0NC4wNSwyMi41MSAxNDMuNDAsMjIuNDcgMTQyLjc1LDIyLjQ1IDE0Mi4xMSwyMi40NyAxNDEuNDYsMjIuNTIgMTQwLjgyLDIyLjU5IDE0MC4xOCwyMi42OCAxMzkuNTUsMjIuNzUgMTM4LjkzLDIyLjc4IDEzOC4zMiwyMi43NiAxMzcuNzEsMjIuNzMgMTM3LjExLDIyLjcyIDEzNi41MSwyMi43NCAxMzUuOTEsMjIuNzggMTM1LjMxLDIyLjgyIDEzNC43MywyMi44NyAxMzQuMTQsMjIuODkgMTMzLjU2LDIyLjg2IDEzMi45OSwyMi43OSAxMzIuNDEsMjIuNjkgMTMxLjg0LDIyLjU5IDEzMS4yNywyMi40OCAxMzAuNzAsMjIuNDAgMTMwLjE0LDIyLjM1IDEyOS41OCwyMi4zMyAxMjkuMDIsMjIuMzAgMTI4LjQ2LDIyLjI4IDEyNy45MSwyMi4yNiAxMjcuMzYsMjIuMjYgMTI2LjgyLDIyLjI3IDEyNi4yNywyMi4zMCAxMjUuNzQsMjIuMzQgMTI1LjIxLDIyLjQ0IDEyNC43MCwyMi41NyAxMjQuMTksMjIuNzIgMTIzLjY4LDIyLjg3IDEyMy4xOCwyMy4wNCAxMjIuNjksMjMuMTkgMTIyLjE5LDIzLjMzIDEyMS42OSwyMy40MSAxMjEuMTgsMjMuNDIgMTIwLjY3LDIzLjQyIDEyMC4xNiwyMy40MiAxMTkuNjYsMjMuNDcgMTE5LjE3LDIzLjU1IDExOC42OSwyMy42NyAxMTguMjIsMjMuODAgMTE3Ljc2LDIzLjk3IDExNy4zMSwyNC4xNCAxMTYuODYsMjQuMzIgMTE2LjQxLDI0LjQ4IDExNS45NSwyNC42MSAxMTUuNTAsMjQuNzQgMTE1LjA1LDI0Ljg4IDExNC42MiwyNS4wNSAxMTQuMjAsMjUuMjYgMTEzLjc5LDI1LjQ4IDExMy40MiwyNS43OCAxMTMuMDQsMjYuMDYgMTEyLjY3LDI2LjMzIDExMi4yNywyNi41MyAxMTEuODcsMjYuNzIgMTEyLjAxLDI3LjAxIDExMi40MCwyNi44MyAxMTIuODIsMjYuNjcgMTEzLjI2LDI2LjU4IDExMy43MSwyNi41MCAxMTQuMTcsMjYuNDUgMTE0LjYxLDI2LjMzIDExNS4wNCwyNi4yMSAxMTUuNDcsMjYuMDggMTE1Ljg5LDI1LjkwIDExNi4zMSwyNS43MCAxMTYuNzQsMjUuNTIgMTE3LjE4LDI1LjM3IDExNy42MywyNS4yNSAxMTguMDksMjUuMTQgMTE4LjU1LDI1LjA0IDExOS4wMywyNC45NyAxMTkuNTEsMjQuOTUgMTIwLjAxLDI0Ljk2IDEyMC41MSwyNC45NiAxMjEuMDAsMjQuOTMgMTIxLjQ4LDI0Ljg3IDEyMS45NiwyNC43OCAxMjIuNDUsMjQuNjggMTIyLjkzLDI0LjU3IDEyMy40MiwyNC40NCAxMjMuOTAsMjQuMjkgMTI0LjM5LDI0LjEzIDEyNC44OSwyNC4wMCAxMjUuNDAsMjMuODkgMTI1LjkxLDIzLjgwIDEyNi40MywyMy43NCAxMjYuOTYsMjMuNjkgMTI3LjQ5LDIzLjY2IDEyOC4wMiwyMy42MyAxMjguNTYsMjMuNjAgMTI5LjEwLDIzLjU1IDEyOS42NCwyMy41MCAxMzAuMTksMjMuNDMgMTMwLjc0LDIzLjQwIDEzMS4zMCwyMy40MCAxMzEuODYsMjMuNDMgMTMyLjQyLDIzLjQ4IDEzMi45OSwyMy41NCAxMzMuNTYsMjMuNTkgMTM0LjE0LDIzLjYyIDEzNC43MSwyMy42NiAxMzUuMjksMjMuNzAgMTM1Ljg4LDIzLjc1IDEzNi40NiwyMy44MCAxMzcuMDYsMjMuODMgMTM3LjY1LDIzLjg0IDEzOC4yNSwyMy44NyAxMzguODYsMjMuOTIgMTM5LjQ2LDIzLjk2IDE0MC4wOCwyMy45NyAxNDAuNzAsMjMuOTYgMTQxLjMyLDIzLjkzIDE0MS45NiwyMy44OSAxNDIuNTksMjMuODkgMTQzLjIzLDIzLjk0IDE0My44NiwyNC4wNCAxNDQuNDksMjQuMTYgMTQ1LjEzLDI0LjI4IDE0NS43OCwyNC4zOCAxNDYuNDMsMjQuNDMgMTQ3LjEwLDI0LjQ1IDE0Ny43NywyNC40OSAxNDguNDQsMjQuNTcgMTQ5LjA5LDI0LjcyIDE0OS43NSwyNC45MSAxNTAuNDEsMjUuMTAgMTUxLjA4LDI1LjI0IDE1MS43NywyNS4zNSAxNTIuNDYsMjUuNDYgMTUzLjE1LDI1LjU4IDE1My44NCwyNS43MyAxNTQuNTIsMjUuOTMgMTU1LjIwLDI2LjE1IDE1NS44OCwyNi40MCAxNTYuNTcsMjYuNjMgMTU3LjI3LDI2LjgzIDE1Ny45NywyNy4wMiAxNTguNjgsMjcuMjEgMTU5LjM5LDI3LjQzIDE2MC4xMCwyNy42NiAxNjAuODEsMjcuODkgMTYxLjUzLDI4LjEyIDE2Mi4yNiwyOC4zMyAxNjMuMDAsMjguNTMgMTYzLjc0LDI4LjczIDE2NC40OSwyOC45MiAxNjUuMjQsMjkuMTQgMTY2LjAwLDI5LjM1IDE2Ni44MCwyOS40MyAxNjcuNjEsMjkuNTAgMTY4LjQzLDI5LjYwIDE2OS4yMSwyOS44MCAxNjkuOTgsMzAuMDYgWiIvPjxwYXRoIGZpbGw9IiM1YTNmMmMiIGZpbGwtcnVsZT0iZXZlbm9kZCIgZD0iTSA5OS44NiwxNi4wMyAxMDAuMDIsMTYuODMgMTAwLjE3LDE3LjYwIDEwMC4zMywxOC4zNSAxMDAuNTEsMTkuMDcgMTAwLjcyLDE5Ljc2IDEwMC45NCwyMC40MyAxMDEuMTgsMjEuMDYgMTAxLjQ0LDIxLjY2IDEwMS43MCwyMi4yMyAxMDEuOTYsMjIuODAgMTAyLjIyLDIzLjM0IDEwMi40OCwyMy44NyAxMDIuNzMsMjQuNDAgMTAzLjAyLDI0LjkwIDEwMy4zNiwyNS4zNSAxMDMuNzcsMjUuNzIgMTA0LjIxLDI2LjA0IDEwNC42NiwyNi4zMiAxMDQuNzksMjYuMjIgMTA0LjgwLDI1LjYxIDEwNC40NSwyNS44NCAxMDQuMDQsMjYuMTcgMTAzLjY0LDI2LjU0IDEwMy4yNCwyNi45MiAxMDIuODUsMjcuMzMgMTAyLjQ5LDI3Ljc4IDEwMi4xNywyOC4yNyAxMDEuODcsMjguODAgMTAxLjU3LDI5LjM0IDEwMS4yOCwyOS45MSAxMDEuMDEsMzAuNTAgMTAwLjc2LDMxLjEzIDEwMC41MywzMS43OSAxMDAuMzIsMzIuNDggMTAwLjE1LDMzLjIwIDEwMC4wMCwzMy45NSA5OS44MywzNC43MSA5OS42NSwzNS4zOSAxMDAuNDAsMzUuMzcgMTAwLjMwLDM0LjY4IDEwMC4wOCwzMy45MiA5OS44MiwzMy4yMSA5OS41NCwzMi41MyA5OS4yOCwzMS44NiA5OS4wMiwzMS4yMiA5OC43MywzMC42MiA5OC40MywzMC4wNSA5OC4xMywyOS41MCA5Ny44NywyOC45NiA5Ny42MSwyOC40MiA5Ny4zMiwyNy45MiA5Ni45NiwyNy40OSA5Ni41NSwyNy4xMSA5Ni4xMywyNi43OCA5NS43MiwyNi40NiA5NS4zMiwyNi4xNSA5NC45NSwyNS45MCA5NC44NSwyNi4wOCA5NS4xMSwyNS45OSA5NS41MSwyNS42OSA5NS45MSwyNS4zNiA5Ni4yOSwyNS4wMSA5Ni42NiwyNC42MiA5Ny4wMCwyNC4xOSA5Ny4zMywyMy43MyA5Ny42NCwyMy4yNSA5Ny45NSwyMi43NCA5OC4yMywyMi4yMCA5OC41MSwyMS42MyA5OC43OSwyMS4wNCA5OS4wOCwyMC40MyA5OS4zNywxOS44MCA5OS42MywxOS4xMiA5OS44MywxOC40MCAxMDAuMDMsMTcuNjYgMTAwLjIxLDE2Ljg5IDEwMC4zOSwxNi4wOSBaIE0gOTkuMjAsMTUuODIgOTkuMDMsMTYuNjAgOTguODksMTcuMzUgOTguNzQsMTguMDggOTguNTgsMTguNzggOTguNDUsMTkuNDcgOTguMzIsMjAuMTMgOTguMTQsMjAuNzYgOTcuOTAsMjEuMzQgOTcuNjMsMjEuODggOTcuMzMsMjIuMzggOTcuMDMsMjIuODYgOTYuNzMsMjMuMzEgOTYuNDAsMjMuNzIgOTYuMDcsMjQuMTAgOTUuNzQsMjQuNDYgOTUuNDAsMjQuNzkgOTUuMDUsMjUuMTEgOTQuNzAsMjUuMzkgOTQuMTgsMjUuODEgOTQuNDksMjYuNDMgOTQuOTEsMjYuNzEgOTUuMjgsMjYuOTkgOTUuNjEsMjcuMzMgOTUuOTAsMjcuNzIgOTYuMTgsMjguMTQgOTYuNDcsMjguNTYgOTYuODAsMjguOTcgOTcuMTQsMjkuNDEgOTcuNDUsMjkuODggOTcuNzAsMzAuNDIgOTcuOTQsMzAuOTggOTguMTYsMzEuNTggOTguMzgsMzIuMjAgOTguNTcsMzIuODYgOTguNzEsMzMuNTUgOTguODQsMzQuMjcgOTkuMDAsMzUuMDEgOTkuMjcsMzUuOTAgMTAwLjY4LDM1Ljg4IDEwMC44NiwzNC45NyAxMDEuMDQsMzQuMjQgMTAxLjI2LDMzLjU0IDEwMS40OCwzMi44NyAxMDEuNzAsMzIuMjMgMTAxLjkzLDMxLjYyIDEwMi4xOCwzMS4wNCAxMDIuNDYsMzAuNTAgMTAyLjczLDI5Ljk4IDEwMy4wMywyOS41MSAxMDMuMzUsMjkuMDcgMTAzLjY2LDI4LjY2IDEwMy45NywyOC4yNiAxMDQuMjgsMjcuODkgMTA0LjYwLDI3LjU1IDEwNC45MiwyNy4yMyAxMDUuMjUsMjYuOTIgMTA1LjYzLDI2LjU3IDEwNS45MSwyNS43OCAxMDUuMzIsMjUuMzYgMTA0Ljk0LDI1LjExIDEwNC41OSwyNC44MCAxMDQuMjUsMjQuNDcgMTAzLjkyLDI0LjExIDEwMy41OSwyMy43MyAxMDMuMjcsMjMuMzEgMTAzLjAwLDIyLjg0IDEwMi43NiwyMi4zMyAxMDIuNTEsMjEuODEgMTAyLjI2LDIxLjI3IDEwMi4wMCwyMC43MCAxMDEuNzYsMjAuMTAgMTAxLjU0LDE5LjQ3IDEwMS4zMywxOC44MSAxMDEuMTMsMTguMTIgMTAwLjkyLDE3LjQwIDEwMC43MiwxNi42NiAxMDAuNTMsMTUuODggWiIvPjxjaXJjbGUgZmlsbD0iIzVhM2YyYyIgY3g9IjIwIiBjeT0iMzAiIHI9IjEuNiIvPjxjaXJjbGUgZmlsbD0iIzVhM2YyYyIgY3g9IjE4MCIgY3k9IjMwIiByPSIxLjYiLz48L3N2Zz4=\");\n  --offstage-icon-bg: rgba(90,63,44,.07);\n  --offstage-line: rgba(90,63,44,.22);\n  --offstage-muted: #735f4b;\n  --offstage-on-ink: #3b2a1d;\n  --offstage-page: #efe8dc;\n  --offstage-panel-bg: #f6f1e8;\n  --offstage-panel-ink: #4a3828;\n  --offstage-pen: #7a5a3c;\n  --offstage-pen-hi: #3b2a1d;\n  --offstage-pop-shadow: 0 14px 36px rgba(90,63,44,.22);\n  --offstage-scroll: rgba(90,63,44,.25);\n  --offstage-title: #2b231c;\n  --offstage-veil-card: rgba(248,244,236,.9);\n}\nhtml[data-offstage-palette=\"warm\"] :is(.kulisy-panel, .kulisy-tab, .kulisy-topbtn, [data-kulisy-note]) {\n  --offstage-active-bg: rgba(201,154,91,.12);\n  --offstage-bg: var(--offstage-i-bg-vignette) 0 0 / 100% 100% no-repeat, var(--offstage-i-bg-tile) 0 0 / 146px 146px repeat, var(--offstage-page);\n  --offstage-ctl-bg: rgba(10,5,3,.45);\n  --offstage-ctl-line: rgba(154,120,84,.42);\n  --offstage-ctl-line-hi: rgba(208,168,104,.6);\n  --offstage-field: #150c08;\n  --offstage-field-bg: rgba(8,4,2,.62);\n  --offstage-field-ink: #f0dcb8;\n  --offstage-focus-line: rgba(208,168,104,.6);\n  --offstage-gold: #d0a868;\n  --offstage-hint: #a3805c;\n  --offstage-i-bg-tile: url(\"data:image/webp;base64,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anVtZGMybWEAEQAQgAAAqgA4m3EDdXJuOmMycGE6ZjVkYTBhYjktYjEwZi00N2VkLWE0OTAtNTA4Yzk0ZTAxOWRjAAAAA5RqdW1iAAAAKWp1bWRjMmFzABEAEIAAAKoAOJtxA2MycGEuYXNzZXJ0aW9ucwAAAAC5anVtYgAAAERqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmluZ3JlZGllbnQudjMAAAAAGGMyc2go4+oXfJrWggebfp5dIt1pAAAAbWNib3KjaWRjOmZvcm1hdGppbWFnZS93ZWJwamluc3RhbmNlSUR4LHhtcDppaWQ6MzRjYTg5ODgtNDM3Ni00M2EyLWE5YjgtNmRmZDQ0NmI1ZTk4bHJlbGF0aW9uc2hpcGhwYXJlbnRPZgAAAeJqdW1iAAAAQWp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuYWN0aW9ucy52MgAAAAAYYzJzaOcO4DgF/KMkuPvzKS04kpIAAAGZY2JvcqJnYWN0aW9uc4KiZmFjdGlvbmtjMnBhLm9wZW5lZGpwYXJhbWV0ZXJzoWtpbmdyZWRpZW50c4GiY3VybHgtc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5pbmdyZWRpZW50LnYzZGhhc2hYIAL9H65AlMncIkfLkT9iFWmDMZSQyOCE0hfd6eTvmgTIpGZhY3Rpb254HWNvbS5hbnRocm9waWMuY2xhdWRlLnByb3ZpZGVkanBhcmFtZXRlcnOheB9jb20uYW50aHJvcGljLm9yaWdpbi1jb25maWRlbmNlZ3Vua25vd25rZGVzY3JpcHRpb254ZkNsYXVkZSBwcm92aWRlZCB0aGlzIGZpbGUgYXQgdGhlIHJlcXVlc3Qgb2YgYSB1c2VyIGFuZCBtYXkgaGF2ZSBjcmVhdGVkIG9yIG1vZGlmaWVkIHRoZSBmaWxlIGNvbnRlbnRzLm1zb2Z0d2FyZUFnZW50oWRuYW1lZkNsYXVkZXJhbGxBY3Rpb25zSW5jbHVkZWT1AAAAyGp1bWIAAABAanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5oYXNoLmRhdGEAAAAAGGMyc2jRW6/bd0qlF729sw5/4PsgAAAAgGNib3KlY2FsZ2ZzaGEyNTZjcGFkTAAAAAAAAAAAAAAAAGRoYXNoWCD1QhUU90yCxPBvjh6FaNFpbZBJDcvTpeSUARYpmtrON2RuYW1lbmp1bWJmIG1hbmlmZXN0amV4Y2x1c2lvbnOBomVzdGFydBkKUmZsZW5ndGgZFocAAAI+anVtYgAAACdqdW1kYzJjbAARABCAAACqADibcQNjMnBhLmNsYWltLnYyAAAAAg9jYm9ypWNhbGdmc2hhMjU2aXNpZ25hdHVyZXhNc2VsZiNqdW1iZj0vYzJwYS91cm46YzJwYTpmNWRhMGFiOS1iMTBmLTQ3ZWQtYTQ5MC01MDhjOTRlMDE5ZGMvYzJwYS5zaWduYXR1cmVqaW5zdGFuY2VJRHgseG1wOmlpZDpjZTRlNzI2Zi0zNTk5LTQxMDItYjIxYi1mZWIwYTI1MzlhYTVyY3JlYXRlZF9hc3NlcnRpb25zg6JjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggAv0frkCUydwiR8uRP2IVaYMxlJDI4ITSF93p5O+aBMiiY3VybHgqc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5hY3Rpb25zLnYyZGhhc2hYILMjeL7y/bz2sRdNRYihUIgTh4KogrXO12mQNEM2SrM9omN1cmx4KXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaGFzaC5kYXRhZGhhc2hYIKAd/0kIkW8ERbQQH4VfQ13yz1nCBdj9TsTfBx43HYM9dGNsYWltX2dlbmVyYXRvcl9pbmZvo2RuYW1lb0FudGhyb3BpYyBGaWxlc2d2ZXJzaW9uZTEuMC4wa3NwZWNWZXJzaW9uZTIuNC4wAAAQOGp1bWIAAAAoanVtZGMyY3MAEQAQgAAAqgA4m3EDYzJwYS5zaWduYXR1cmUAAAAQCGNib3LShFkCEqIBJhghWQIKMIICBjCCAY2gAwIBAgIUQOWgCu7COdC+uIP6BkIFPWdVEwAwCgYIKoZIzj0EAwMwSTEXMBUGA1UEChMOQW50aHJvcGljLCBQQkMxLjAsBgNVBAMTJUFudGhyb3BpYyBDb250ZW50IENyZWRlbnRpYWxzIFJvb3QgQ0EwHhcNMjYwODA3MTg0MzU2WhcNMjgwODA2MTk0MzU2WjBEMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEpMCcGA1UEAxMgQW50aHJvcGljIENsYXVkZSBDb250ZW50IFNpZ25pbmcwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASYegpry1AYBRTVNL1CpTlbROnY3dey+UrsF9C3phYrATN3ZHf93Mo8RQN0KOUuOn19P4oWNFWe5n2/She9N7eTo1gwVjAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lBA4wDAYKKwYBBAGD6F4CATAMBgNVHRMBAf8EAjAAMB8GA1UdIwQYMBaAFM5R4gSBTmRbI/jjxM+aPpzB11zCMAoGCCqGSM49BAMDA2cAMGQCMDFzHRSeAXrSy1WOzkbhPZ6Km2wGTmZ/2gK18k8BQGXyqz88Rdrz6CTX9flAnYNVxgIwcF9c3fVhqmJKpi+UhasNUMko69cyX6STPfta3Q8EjyzDjzoyrol46FP6VFHhvUcJoWNwYWRZDZ4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2WEDtSZDxf7V0IMejSpPVZwZc/gQeqGVCpZJHNXBQHcEE2Zy2GUXRVkmoGvTQwk1ulrjK2SrFbIrLIBXLnh0BjQyGAA==\");\n  --offstage-i-bg-vignette: url(\"data:image/webp;base64,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AAAWf2p1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZZanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYToxNmQyMGUwMS02M2Q5LTRmOGEtYTQ5My1lNmEzMDk1MWU2ZDcAAAADlGp1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALlqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaBTYilM2RX8UHjLaBIuRwp4AAABtY2JvcqNpZGM6Zm9ybWF0amltYWdlL3dlYnBqaW5zdGFuY2VJRHgseG1wOmlpZDoxOTc4YTdmMy02MTA2LTRhZjItODE0Ny1kZTM5ZTg2MTk0MmRscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNoTP3JKCiqpQv9HP8y/TFVYAAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFgg/Wb1dMac2YxAo9orHW5YJdVWSER8B0SIX3QxDu/DrmOkZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaELRhf4bFo06xkl4Kt6NBAkAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRMAAAAAAAAAAAAAAAAZGhhc2hYIPNl/nmp+eB/hkleSA8hljnU+fEvROw7Cvx48pjnrivEZG5hbWVuanVtYmYgbWFuaWZlc3RqZXhjbHVzaW9uc4GiZXN0YXJ0GTu8Zmxlbmd0aBkWhwAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOjE2ZDIwZTAxLTYzZDktNGY4YS1hNDkzLWU2YTMwOTUxZTZkNy9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOmVmMjI2ZGI2LTM1OTQtNGIyNS05NGYxLTY0MmJjMTgxZDZlMnJjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCD9ZvV0xpzZjECj2isdblgl1VZIRHwHRIhfdDEO78OuY6JjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggTNAj5DSCLgUDkTYFSDgQrsHBfHNyFhQQiGfiTbQbWmGiY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFggDPnsbSAjdBzBagIjUOUnpnF4qNoJwnqKK5pRwzsbiyZ0Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQCflAXi1etDc/1DXElXNBN7xayFICmRSl7FkxK8HSgpuPhy7g02HPd34MQHvhP+Vh4Q6GnFKN2KhgW5C6u9Z0GwA\");\n  --offstage-i-input-frame: url(\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMTMwIiB2aWV3Qm94PSIwIDAgMjAwIDEzMCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJjbGciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM5YTZhMzYiLz48c3RvcCBvZmZzZXQ9Ii4yMiIgc3RvcC1jb2xvcj0iI2UyYjg3NCIvPjxzdG9wIG9mZnNldD0iLjQ1IiBzdG9wLWNvbG9yPSIjYjk4NjRhIi8+PHN0b3Agb2Zmc2V0PSIuNyIgc3RvcC1jb2xvcj0iI2YwY2Y4ZSIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2E1NzMzZCIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjxwYXRoIGZpbGw9InVybCgjY2xnKSIgZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNIDM1LjAwLDIzLjYyIDM1LjYwLDIzLjYzIDM2LjIwLDIzLjY0IDM2LjgwLDIzLjY0IDM3LjQwLDIzLjU4IDM4LjAxLDIzLjUzIDM4LjYxLDIzLjUxIDM5LjIxLDIzLjQ4IDM5LjgxLDIzLjQyIDQwLjQxLDIzLjMwIDQxLjAxLDIzLjE0IDQxLjYxLDIyLjk5IDQyLjIxLDIyLjkwIDQyLjgxLDIyLjg2IDQzLjQyLDIyLjg1IDQ0LjAyLDIyLjg0IDQ0LjYyLDIyLjg2IDQ1LjIyLDIyLjkwIDQ1LjgyLDIyLjk2IDQ2LjQyLDIyLjk5IDQ3LjAyLDIyLjk3IDQ3LjYyLDIyLjkzIDQ4LjIzLDIyLjg5IDQ4LjgzLDIyLjg0IDQ5LjQzLDIyLjc4IDUwLjAzLDIyLjcxIDUwLjYzLDIyLjY0IDUxLjIzLDIyLjYyIDUxLjgzLDIyLjY3IDUyLjQzLDIyLjgwIDUzLjAzLDIyLjk4IDUzLjY0LDIzLjE2IDU0LjI0LDIzLjI5IDU0Ljg0LDIzLjMyIDU1LjQ0LDIzLjI2IDU2LjA0LDIzLjE5IDU2LjY0LDIzLjE0IDU3LjI0LDIzLjE1IDU3Ljg0LDIzLjE2IDU4LjQ0LDIzLjEyIDU5LjA1LDIzLjAwIDU5LjY1LDIyLjg3IDYwLjI1LDIyLjc0IDYwLjg1LDIyLjYzIDYxLjQ1LDIyLjU1IDYyLjA1LDIyLjUxIDYyLjY1LDIyLjUyIDYzLjI1LDIyLjU2IDYzLjg2LDIyLjY0IDY0LjQ2LDIyLjc1IDY1LjA2LDIyLjg2IDY1LjY2LDIyLjk1IDY2LjI2LDIyLjk5IDY2Ljg2LDIyLjk3IDY3LjQ2LDIyLjkzIDY4LjA2LDIyLjkxIDY4LjY2LDIyLjkxIDY5LjI3LDIyLjk2IDY5Ljg3LDIzLjAzIDcwLjQ3LDIzLjA5IDcxLjA3LDIzLjEwIDcxLjY3LDIzLjA3IDcyLjI3LDIzLjAyIDcyLjg3LDIzLjAyIDczLjQ3LDIzLjA2IDc0LjA3LDIzLjEyIDc0LjY4LDIzLjE4IDc1LjI4LDIzLjIyIDc1Ljg4LDIzLjIzIDc2LjQ4LDIzLjE5IDc3LjA4LDIzLjEzIDc3LjY4LDIzLjA5IDc4LjI4LDIzLjA5IDc4Ljg4LDIzLjEwIDc5LjQ4LDIzLjEwIDgwLjA5LDIzLjEwIDgwLjY5LDIzLjExIDgxLjI5LDIzLjE0IDgxLjg5LDIzLjE3IDgyLjQ5LDIzLjE5IDgzLjA5LDIzLjE2IDgzLjY5LDIzLjEwIDg0LjI5LDIzLjAyIDg0LjkwLDIyLjk2IDg1LjUwLDIyLjk0IDg2LjEwLDIyLjkzIDg2LjcwLDIyLjkzIDg3LjMwLDIyLjkxIDg3LjkwLDIyLjg4IDg4LjUwLDIyLjg0IDg5LjEwLDIyLjc4IDg5LjcwLDIyLjcyIDkwLjMxLDIyLjY4IDkwLjkxLDIyLjY2IDkxLjUxLDIyLjY0IDkyLjExLDIyLjYyIDkyLjcxLDIyLjYwIDkzLjMxLDIyLjYyIDkzLjkxLDIyLjY1IDk0LjUxLDIyLjY3IDk1LjExLDIyLjcwIDk1LjcyLDIyLjc2IDk2LjMyLDIyLjgxIDk2LjkyLDIyLjg0IDk3LjUyLDIyLjc5IDk4LjEyLDIyLjY4IDk4LjcyLDIyLjU3IDk5LjMyLDIyLjU1IDk5LjkyLDIyLjY1IDEwMC41MywyMi44MCAxMDEuMTMsMjIuOTYgMTAxLjczLDIzLjA3IDEwMi4zMywyMy4xOCAxMDIuOTMsMjMuMjggMTAzLjUzLDIzLjM1IDEwNC4xMywyMy4zNSAxMDQuNzMsMjMuMzEgMTA1LjMzLDIzLjI1IDEwNS45NCwyMy4xNSAxMDYuNTQsMjMuMDMgMTA3LjE0LDIyLjkxIDEwNy43NCwyMi44MCAxMDguMzQsMjIuNzEgMTA4Ljk0LDIyLjY2IDEwOS41NCwyMi41NyAxMTAuMTQsMjIuNDYgMTEwLjc0LDIyLjM4IDExMS4zNSwyMi4zOSAxMTEuOTUsMjIuNDcgMTEyLjU1LDIyLjU2IDExMy4xNSwyMi42NCAxMTMuNzUsMjIuNjkgMTE0LjM1LDIyLjc3IDExNC45NSwyMi44NCAxMTUuNTUsMjIuOTAgMTE2LjE1LDIyLjkxIDExNi43NiwyMi45MSAxMTcuMzYsMjIuOTEgMTE3Ljk2LDIyLjkwIDExOC41NiwyMi44OSAxMTkuMTYsMjIuODcgMTE5Ljc2LDIyLjg1IDEyMC4zNiwyMi44NSAxMjAuOTYsMjIuODggMTIxLjU3LDIyLjkxIDEyMi4xNywyMi45NSAxMjIuNzcsMjIuOTggMTIzLjM3LDIzLjAyIDEyMy45NywyMy4wNCAxMjQuNTcsMjMuMDYgMTI1LjE3LDIzLjA3IDEyNS43NywyMy4wNyAxMjYuMzcsMjMuMDQgMTI2Ljk4LDIyLjk4IDEyNy41OCwyMi45NCAxMjguMTgsMjIuOTIgMTI4Ljc4LDIyLjkzIDEyOS4zOCwyMi45NSAxMjkuOTgsMjIuOTQgMTMwLjU4LDIyLjkyIDEzMS4xOCwyMi45MSAxMzEuNzgsMjIuOTMgMTMyLjM5LDIyLjk1IDEzMi45OSwyMi45NCAxMzMuNTksMjIuOTIgMTM0LjE5LDIyLjg5IDEzNC43OSwyMi44NyAxMzUuMzksMjIuODkgMTM1Ljk5LDIyLjkzIDEzNi41OSwyMi45NyAxMzcuMjAsMjIuOTcgMTM3LjgwLDIyLjg3IDEzOC40MCwyMi42NiAxMzkuMDAsMjIuNDcgMTM5LjYwLDIyLjQ0IDE0MC4yMCwyMi40MiAxNDAuODAsMjIuNDEgMTQxLjQwLDIyLjQzIDE0Mi4wMCwyMi40OSAxNDIuNjEsMjIuNTIgMTQzLjIxLDIyLjYzIDE0My44MSwyMi43NiAxNDQuNDEsMjIuODcgMTQ1LjAxLDIyLjkzIDE0NS42MSwyMi45OCAxNDYuMjEsMjMuMDMgMTQ2LjgxLDIzLjEwIDE0Ny40MSwyMy4xOCAxNDguMDIsMjMuMjggMTQ4LjYyLDIzLjM1IDE0OS4yMiwyMy40MCAxNDkuODIsMjMuNDAgMTUwLjQyLDIzLjM1IDE1MS4wMiwyMy4yOCAxNTEuNjIsMjMuMjMgMTUyLjIyLDIzLjE4IDE1Mi44MiwyMy4xMCAxNTMuNDMsMjMuMDMgMTU0LjAzLDIzLjAwIDE1NC42MywyMy4wMCAxNTUuMjMsMjMuMDIgMTU1LjgzLDIzLjAzIDE1Ni40MywyMy4wMiAxNTcuMDMsMjMuMDQgMTU3LjYzLDIzLjA5IDE1OC4yNCwyMy4xMiAxNTguODQsMjMuMDkgMTU5LjQ0LDIyLjk0IDE2MC4wNCwyMi43MiAxNjAuNjQsMjIuNTMgMTYxLjI0LDIyLjQzIDE2MS44NCwyMi40MyAxNjIuNDQsMjIuNDcgMTYzLjA0LDIyLjU0IDE2My42NSwyMi42MSAxNjQuMjUsMjIuNjYgMTY0LjQ5LDIyLjYxIDE2NC4yNywyMi41OSAxNjQuMjMsMjMuMTIgMTY0LjIwLDIzLjc2IDE2NC4yMiwyNC40MSAxNjQuMjksMjUuMDYgMTY0LjQyLDI1LjcwIDE2NC41NywyNi4zMyAxNjQuNzMsMjYuOTcgMTY0LjkyLDI3LjYwIDE2NS4xNCwyOC4yMiAxNjUuMzgsMjguODUgMTY1LjY0LDI5LjQ3IDE2NS45NSwzMC4wNiAxNjYuMzQsMzAuNjEgMTY2LjgyLDMxLjA4IDE2Ny4zNiwzMS40OSAxNjcuOTEsMzEuODcgMTY4LjQ1LDMyLjI1IDE2OC45NSwzMi42NiAxNjkuNDQsMzMuMDggMTY5Ljk2LDMzLjQ4IDE3MC41MSwzMy44MSAxNzEuMDksMzQuMTAgMTcxLjY4LDM0LjM3IDE3Mi4yNiwzNC42MyAxNzIuODUsMzQuODkgMTczLjQ1LDM1LjExIDE3NC4wNywzNS4yOCAxNzQuNjksMzUuNDQgMTc1LjMxLDM1LjU5IDE3NS45NSwzNS42OSAxNzYuNTgsMzUuNzcgMTc3LjIxLDM1LjkwIDE3Ny4yOSwzNS44NyAxNzYuODEsMzUuNjIgMTc2LjY1LDM2LjA3IDE3Ni40OSwzNi42NyAxNzYuMzIsMzcuMjcgMTc2LjE0LDM3Ljg3IDE3Ni4wMCwzOC40NyAxNzUuOTYsMzkuMDcgMTc2LjAyLDM5LjY4IDE3Ni4wOCw0MC4yOCAxNzYuMTcsNDAuODggMTc2LjMxLDQxLjQ4IDE3Ni41Miw0Mi4wOCAxNzYuNzgsNDIuNjggMTc3LjAwLDQzLjI4IDE3Ny4xMiw0My44OCAxNzcuMTcsNDQuNDggMTc3LjI2LDQ1LjA5IDE3Ny4zNyw0NS42OSAxNzcuNDYsNDYuMjkgMTc3LjUxLDQ2Ljg5IDE3Ny41Myw0Ny40OSAxNzcuNTQsNDguMDkgMTc3LjU1LDQ4LjY5IDE3Ny41Niw0OS4yOSAxNzcuNTYsNDkuOTAgMTc3LjUzLDUwLjUwIDE3Ny40OCw1MS4xMCAxNzcuNDEsNTEuNzAgMTc3LjM1LDUyLjMwIDE3Ny4zMCw1Mi45MCAxNzcuMjUsNTMuNTAgMTc3LjIyLDU0LjEwIDE3Ny4yMyw1NC43MCAxNzcuMjEsNTUuMzEgMTc3LjE0LDU1LjkxIDE3Ni45OSw1Ni41MSAxNzYuODAsNTcuMTEgMTc2LjYwLDU3LjcxIDE3Ni40OCw1OC4zMSAxNzYuMzksNTguOTEgMTc2LjMyLDU5LjUxIDE3Ni4yOSw2MC4xMSAxNzYuMzAsNjAuNzIgMTc2LjM0LDYxLjMyIDE3Ni4zOSw2MS45MiAxNzYuNDQsNjIuNTIgMTc2LjQ4LDYzLjEyIDE3Ni41Miw2My43MiAxNzYuNTYsNjQuMzIgMTc2LjU5LDY0LjkyIDE3Ni42NCw2NS41MyAxNzYuNzQsNjYuMTMgMTc2LjkxLDY2LjczIDE3Ny4xMCw2Ny4zMyAxNzcuMjgsNjcuOTMgMTc3LjQzLDY4LjUzIDE3Ny41Niw2OS4xMyAxNzcuNjUsNjkuNzMgMTc3LjY4LDcwLjMzIDE3Ny42NSw3MC45NCAxNzcuNTgsNzEuNTQgMTc3LjQ5LDcyLjE0IDE3Ny40MSw3Mi43NCAxNzcuMzUsNzMuMzQgMTc3LjMxLDczLjk0IDE3Ny4yOCw3NC41NCAxNzcuMjQsNzUuMTQgMTc3LjE5LDc1Ljc0IDE3Ny4xNiw3Ni4zNSAxNzcuMTMsNzYuOTUgMTc3LjExLDc3LjU1IDE3Ny4xMiw3OC4xNSAxNzcuMTQsNzguNzUgMTc3LjE1LDc5LjM1IDE3Ny4xMyw3OS45NSAxNzcuMDYsODAuNTUgMTc2Ljk3LDgxLjE1IDE3Ni45MSw4MS43NiAxNzYuOTIsODIuMzYgMTc3LjAwLDgyLjk2IDE3Ny4xMCw4My41NiAxNzcuMTYsODQuMTYgMTc3LjEzLDg0Ljc2IDE3Ny4wMyw4NS4zNiAxNzYuOTAsODUuOTYgMTc2Ljc3LDg2LjU3IDE3Ni43MSw4Ny4xNyAxNzYuNjgsODcuNzcgMTc2LjY3LDg4LjM3IDE3Ni42Nyw4OC45NyAxNzYuNzAsODkuNTcgMTc2Ljc2LDkwLjE3IDE3Ni44MCw5MC43NyAxNzYuODIsOTEuMzcgMTc2LjgxLDkxLjk4IDE3Ni43OCw5Mi41OCAxNzYuNzIsOTMuMTggMTc2LjYzLDkzLjc4IDE3Ni41NSw5NC4zOCAxNzYuOTAsOTMuOTcgMTc3LjMzLDkzLjUxIDE3Ni42OCw5My41NSAxNzYuMDIsOTMuNjQgMTc1LjM3LDkzLjgxIDE3NC43Myw5NC4wMyAxNzQuMTEsOTQuMjggMTczLjUxLDk0LjU2IDE3Mi45Miw5NC44NiAxNzIuMzQsOTUuMTYgMTcxLjc3LDk1LjQ2IDE3MS4yMCw5NS43NiAxNzAuNjIsOTYuMDYgMTcwLjA0LDk2LjM1IDE2OS40NSw5Ni42NiAxNjguODcsOTYuOTkgMTY4LjMyLDk3LjM3IDE2Ny43OSw5Ny43NyAxNjcuMjcsOTguMjEgMTY2Ljc3LDk4LjY2IDE2Ni4yOSw5OS4xNSAxNjUuODcsOTkuNjggMTY1LjUwLDEwMC4yNSAxNjUuMTksMTAwLjg1IDE2NC45MiwxMDEuNDggMTY0LjY5LDEwMi4xMSAxNjQuNDksMTAyLjc2IDE2NC4zMiwxMDMuNDEgMTY0LjE5LDEwNC4wNyAxNjQuMDksMTA0LjcyIDE2NC4wMCwxMDUuMzggMTYzLjg3LDEwNi4wMyAxNjMuNzEsMTA2LjY3IDE2My41NSwxMDcuMzMgMTYzLjkwLDEwNi44NyAxNjQuNDAsMTA2LjM1IDE2My44MCwxMDYuMzIgMTYzLjIwLDEwNi4zMSAxNjIuNjAsMTA2LjI5IDE2MS45OSwxMDYuMjcgMTYxLjM5LDEwNi4yNCAxNjAuNzksMTA2LjIzIDE2MC4xOSwxMDYuMjQgMTU5LjU5LDEwNi4yNSAxNTguOTksMTA2LjIzIDE1OC4zOSwxMDYuMjEgMTU3Ljc5LDEwNi4yMSAxNTcuMTksMTA2LjIyIDE1Ni41OCwxMDYuMjIgMTU1Ljk4LDEwNi4yOCAxNTUuMzgsMTA2LjM4IDE1NC43OCwxMDYuNTYgMTU0LjE4LDEwNi43OCAxNTMuNTgsMTA2Ljk5IDE1Mi45OCwxMDcuMTQgMTUyLjM4LDEwNy4yMiAxNTEuNzcsMTA3LjI0IDE1MS4xNywxMDcuMjIgMTUwLjU3LDEwNy4yMiAxNDkuOTcsMTA3LjIzIDE0OS4zNywxMDcuMjMgMTQ4Ljc3LDEwNy4yMyAxNDguMTcsMTA3LjE5IDE0Ny41NywxMDcuMDkgMTQ2Ljk3LDEwNi45NSAxNDYuMzYsMTA2Ljg1IDE0NS43NiwxMDYuODAgMTQ1LjE2LDEwNi43NyAxNDQuNTYsMTA2LjczIDE0My45NiwxMDYuNjcgMTQzLjM2LDEwNi42MCAxNDIuNzYsMTA2LjU0IDE0Mi4xNiwxMDYuNDkgMTQxLjU2LDEwNi40NyAxNDAuOTUsMTA2LjQ3IDE0MC4zNSwxMDYuNTQgMTM5Ljc1LDEwNi42NyAxMzkuMTUsMTA2LjgwIDEzOC41NSwxMDYuODkgMTM3Ljk1LDEwNi45NyAxMzcuMzUsMTA3LjAzIDEzNi43NSwxMDcuMDYgMTM2LjE0LDEwNy4wNCAxMzUuNTQsMTA2Ljk2IDEzNC45NCwxMDYuODUgMTM0LjM0LDEwNi43NCAxMzMuNzQsMTA2LjY1IDEzMy4xNCwxMDYuNTkgMTMyLjU0LDEwNi41NSAxMzEuOTQsMTA2LjUyIDEzMS4zNCwxMDYuNDkgMTMwLjczLDEwNi40OSAxMzAuMTMsMTA2LjUxIDEyOS41MywxMDYuNTIgMTI4LjkzLDEwNi41MSAxMjguMzMsMTA2LjQ2IDEyNy43MywxMDYuNDEgMTI3LjEzLDEwNi4zNyAxMjYuNTMsMTA2LjM4IDEyNS45MywxMDYuNDUgMTI1LjMyLDEwNi41NCAxMjQuNzIsMTA2LjYyIDEyNC4xMiwxMDYuNjggMTIzLjUyLDEwNi43OSAxMjIuOTIsMTA2LjkyIDEyMi4zMiwxMDcuMDcgMTIxLjcyLDEwNy4xOSAxMjEuMTIsMTA3LjI4IDEyMC41MiwxMDcuMzQgMTE5LjkxLDEwNy40MCAxMTkuMzEsMTA3LjQ1IDExOC43MSwxMDcuNTEgMTE4LjExLDEwNy41NiAxMTcuNTEsMTA3LjU5IDExNi45MSwxMDcuNTkgMTE2LjMxLDEwNy41NiAxMTUuNzEsMTA3LjUxIDExNS4xMCwxMDcuNDggMTE0LjUwLDEwNy40OCAxMTMuOTAsMTA3LjUyIDExMy4zMCwxMDcuNTYgMTEyLjcwLDEwNy42MCAxMTIuMTAsMTA3LjYwIDExMS41MCwxMDcuNTkgMTEwLjkwLDEwNy41OCAxMTAuMzAsMTA3LjU4IDEwOS42OSwxMDcuNjIgMTA5LjA5LDEwNy42OSAxMDguNDksMTA3Ljc0IDEwNy44OSwxMDcuNzAgMTA3LjI5LDEwNy41NSAxMDYuNjksMTA3LjI5IDEwNi4wOSwxMDcuMDIgMTA1LjQ5LDEwNi44MyAxMDQuODksMTA2LjczIDEwNC4yOCwxMDYuNjggMTAzLjY4LDEwNi42NyAxMDMuMDgsMTA2LjY0IDEwMi40OCwxMDYuNjQgMTAxLjg4LDEwNi42NyAxMDEuMjgsMTA2LjcyIDEwMC42OCwxMDYuNzQgMTAwLjA4LDEwNi43MSA5OS40NywxMDYuNjcgOTguODcsMTA2LjYzIDk4LjI3LDEwNi42MiA5Ny42NywxMDYuNTkgOTcuMDcsMTA2LjU0IDk2LjQ3LDEwNi40OCA5NS44NywxMDYuNDUgOTUuMjcsMTA2LjQ1IDk0LjY3LDEwNi40NiA5NC4wNiwxMDYuNDkgOTMuNDYsMTA2LjU0IDkyLjg2LDEwNi42MiA5Mi4yNiwxMDYuNzIgOTEuNjYsMTA2LjgyIDkxLjA2LDEwNi44OCA5MC40NiwxMDYuOTEgODkuODYsMTA2LjkwIDg5LjI2LDEwNi44OCA4OC42NSwxMDYuODYgODguMDUsMTA2LjgyIDg3LjQ1LDEwNi43NiA4Ni44NSwxMDYuNjkgODYuMjUsMTA2LjYzIDg1LjY1LDEwNi42MiA4NS4wNSwxMDYuNjUgODQuNDUsMTA2LjY3IDgzLjg1LDEwNi42NCA4My4yNCwxMDYuNjEgODIuNjQsMTA2LjYxIDgyLjA0LDEwNi42NCA4MS40NCwxMDYuNjggODAuODQsMTA2LjcxIDgwLjI0LDEwNi43NSA3OS42NCwxMDYuODEgNzkuMDQsMTA2Ljg4IDc4LjQzLDEwNi45MiA3Ny44MywxMDYuOTIgNzcuMjMsMTA2LjkzIDc2LjYzLDEwNi45NSA3Ni4wMywxMDYuOTUgNzUuNDMsMTA2LjkzIDc0LjgzLDEwNi44OSA3NC4yMywxMDYuODcgNzMuNjMsMTA2Ljg3IDczLjAyLDEwNi44OCA3Mi40MiwxMDYuODcgNzEuODIsMTA2LjgzIDcxLjIyLDEwNi43NSA3MC42MiwxMDYuNjYgNzAuMDIsMTA2LjYxIDY5LjQyLDEwNi42MCA2OC44MiwxMDYuNjEgNjguMjIsMTA2LjYzIDY3LjYxLDEwNi42NCA2Ny4wMSwxMDYuNjQgNjYuNDEsMTA2LjY3IDY1LjgxLDEwNi43NCA2NS4yMSwxMDYuNzkgNjQuNjEsMTA2LjgzIDY0LjAxLDEwNi44OCA2My40MSwxMDYuOTMgNjIuODAsMTA2Ljk2IDYyLjIwLDEwNi45NSA2MS42MCwxMDYuOTMgNjEuMDAsMTA2Ljg4IDYwLjQwLDEwNi43OSA1OS44MCwxMDYuNjcgNTkuMjAsMTA2LjUyIDU4LjYwLDEwNi4zNiA1OC4wMCwxMDYuMjQgNTcuMzksMTA2LjEzIDU2Ljc5LDEwNi4wMiA1Ni4xOSwxMDUuOTUgNTUuNTksMTA1Ljk0IDU0Ljk5LDEwNS45NyA1NC4zOSwxMDYuMDMgNTMuNzksMTA2LjA5IDUzLjE5LDEwNi4xMyA1Mi41OSwxMDYuMjAgNTEuOTgsMTA2LjMyIDUxLjM4LDEwNi40NCA1MC43OCwxMDYuNTAgNTAuMTgsMTA2LjQ4IDQ5LjU4LDEwNi40NCA0OC45OCwxMDYuMzkgNDguMzgsMTA2LjMzIDQ3Ljc4LDEwNi4yNCA0Ny4xOCwxMDYuMTAgNDYuNTcsMTA1Ljk5IDQ1Ljk3LDEwNS45NCA0NS4zNywxMDUuOTcgNDQuNzcsMTA2LjA2IDQ0LjE3LDEwNi4xOSA0My41NywxMDYuMzIgNDIuOTcsMTA2LjQ4IDQyLjM3LDEwNi42NyA0MS43NiwxMDYuODMgNDEuMTYsMTA2LjkzIDQwLjU2LDEwNi45NCAzOS45NiwxMDYuODcgMzkuMzYsMTA2LjgyIDM4Ljc2LDEwNi44MiAzOC4xNiwxMDYuODIgMzcuNTYsMTA2LjgyIDM2Ljk2LDEwNi44MSAzNi4zNSwxMDYuODMgMzUuNzUsMTA2Ljg2IDM1LjcxLDEwNy4wNSAzNi4wNSwxMDcuMzYgMzYuMDAsMTA2Ljg3IDM1Ljg4LDEwNi4yMyAzNS43MSwxMDUuNjAgMzUuNTEsMTA0Ljk5IDM1LjMxLDEwNC4zOCAzNS4xMiwxMDMuNzcgMzQuOTQsMTAzLjE2IDM0LjcyLDEwMi41NSAzNC40NCwxMDEuOTggMzQuMDQsMTAxLjQ3IDMzLjU3LDEwMS4wMiAzMy4wOCwxMDAuNTkgMzIuNjEsMTAwLjE3IDMyLjE0LDk5Ljc3IDMxLjY2LDk5LjM5IDMxLjIwLDk5LjAwIDMwLjc2LDk4LjYwIDMwLjMzLDk4LjE5IDI5LjkwLDk3Ljc3IDI5LjQ3LDk3LjM0IDI5LjA1LDk2Ljg5IDI4LjY0LDk2LjM4IDI4LjIxLDk1Ljg2IDI3LjcyLDk1LjQwIDI3LjE2LDk1LjA4IDI2LjU3LDk0LjgzIDI1Ljk3LDk0LjU5IDI1LjM2LDk0LjM2IDI0Ljc0LDk0LjE1IDI0LjEwLDk0LjAzIDIzLjQ1LDkzLjk1IDIyLjgwLDkzLjg3IDIyLjgyLDkzLjk3IDIzLjMzLDk0LjM3IDIzLjQxLDkzLjkzIDIzLjQ0LDkzLjMzIDIzLjQzLDkyLjczIDIzLjQxLDkyLjEzIDIzLjM3LDkxLjUzIDIzLjMzLDkwLjkzIDIzLjMwLDkwLjMyIDIzLjI5LDg5LjcyIDIzLjMwLDg5LjEyIDIzLjMxLDg4LjUyIDIzLjI3LDg3LjkyIDIzLjIyLDg3LjMyIDIzLjE1LDg2LjcyIDIzLjA3LDg2LjEyIDIyLjk4LDg1LjUyIDIyLjg5LDg0LjkxIDIyLjgxLDg0LjMxIDIyLjc3LDgzLjcxIDIyLjc4LDgzLjExIDIyLjgyLDgyLjUxIDIyLjkxLDgxLjkxIDIzLjA0LDgxLjMxIDIzLjIwLDgwLjcxIDIzLjMzLDgwLjEwIDIzLjQ0LDc5LjUwIDIzLjUxLDc4LjkwIDIzLjUzLDc4LjMwIDIzLjQ3LDc3LjcwIDIzLjQwLDc3LjEwIDIzLjMxLDc2LjUwIDIzLjIwLDc1LjkwIDIzLjA1LDc1LjMwIDIyLjkwLDc0LjY5IDIyLjgwLDc0LjA5IDIyLjgwLDczLjQ5IDIyLjg4LDcyLjg5IDIyLjk5LDcyLjI5IDIzLjA0LDcxLjY5IDIzLjAxLDcxLjA5IDIyLjk2LDcwLjQ5IDIyLjkwLDY5Ljg5IDIyLjg1LDY5LjI4IDIyLjgyLDY4LjY4IDIyLjgxLDY4LjA4IDIyLjc5LDY3LjQ4IDIyLjc1LDY2Ljg4IDIyLjcwLDY2LjI4IDIyLjY1LDY1LjY4IDIyLjYxLDY1LjA4IDIyLjU4LDY0LjQ3IDIyLjU1LDYzLjg3IDIyLjUyLDYzLjI3IDIyLjQ5LDYyLjY3IDIyLjQ5LDYyLjA3IDIyLjUzLDYxLjQ3IDIyLjU5LDYwLjg3IDIyLjY1LDYwLjI3IDIyLjY5LDU5LjY3IDIyLjc2LDU5LjA2IDIyLjgzLDU4LjQ2IDIyLjkwLDU3Ljg2IDIyLjkzLDU3LjI2IDIyLjk0LDU2LjY2IDIyLjk1LDU2LjA2IDIyLjk2LDU1LjQ2IDIzLjAwLDU0Ljg2IDIzLjAxLDU0LjI2IDIzLjAxLDUzLjY1IDIzLjAyLDUzLjA1IDIzLjA2LDUyLjQ1IDIzLjEwLDUxLjg1IDIzLjEyLDUxLjI1IDIzLjA5LDUwLjY1IDIzLjA0LDUwLjA1IDIyLjk5LDQ5LjQ1IDIyLjk2LDQ4Ljg1IDIyLjkxLDQ4LjI0IDIyLjgzLDQ3LjY0IDIyLjc2LDQ3LjA0IDIyLjcxLDQ2LjQ0IDIyLjcxLDQ1Ljg0IDIyLjc1LDQ1LjI0IDIyLjgwLDQ0LjY0IDIyLjg3LDQ0LjA0IDIyLjk0LDQzLjQzIDIzLjAwLDQyLjgzIDIzLjA0LDQyLjIzIDIzLjA1LDQxLjYzIDIzLjA0LDQxLjAzIDIzLjA0LDQwLjQzIDIzLjA2LDM5LjgzIDIzLjA4LDM5LjIzIDIzLjA5LDM4LjYzIDIzLjA2LDM4LjAyIDIyLjk5LDM3LjQyIDIyLjkxLDM2LjgyIDIyLjg0LDM2LjIyIDIyLjgyLDM1LjYyIDIyLjY1LDM1LjYyIDIyLjY0LDM1Ljk5IDIzLjI4LDM2LjA1IDIzLjkzLDM2LjAwIDI0LjU3LDM1LjgzIDI1LjE4LDM1LjYxIDI1LjgwLDM1LjQxIDI2LjQyLDM1LjI0IDI3LjAzLDM1LjAzIDI3LjYyLDM0Ljc3IDI4LjE5LDM0LjQ2IDI4Ljc1LDM0LjE1IDI5LjMzLDMzLjg2IDI5LjkwLDMzLjU2IDMwLjQ1LDMzLjIxIDMwLjk0LDMyLjc5IDMxLjQwLDMyLjMzIDMxLjg2LDMxLjg3IDMyLjM1LDMxLjQ1IDMyLjg3LDMxLjA0IDMzLjM2LDMwLjU5IDMzLjg0LDMwLjEyIDM0LjMyLDI5LjYzIDM0LjgwLDI5LjE0IDM1LjI4LDI4LjYyIDM1LjcxLDI4LjA2IDM2LjA1LDI3LjQ1IDM2LjI4LDI2Ljc5IDM2LjQwLDI2LjEwIDM2LjQ3LDI1LjQxIDM2LjU2LDI0LjcyIDM2LjcyLDI0LjA1IDM2LjkxLDIzLjM4IDM2Ljk0LDIyLjY5IDM2Ljk0LDIyLjA0IFogTSAzMy40MiwyMS45NiAzMy40MiwyMi41MyAzMy40MywyMy4wNiAzMy41NiwyMy42MSAzMy42MiwyNC4xNyAzMy41NiwyNC43MiAzMy40MSwyNS4yNSAzMy4yNCwyNS43NyAzMy4xMCwyNi4zMCAzMi45NywyNi44NSAzMi44MCwyNy4zOCAzMi41NSwyNy44OCAzMi4yMSwyOC4zMyAzMS44MSwyOC43MiAzMS4zNiwyOS4wNyAzMC45MSwyOS40MSAzMC41MCwyOS43NiAzMC4wOSwzMC4xMCAyOS42OSwzMC40NCAyOS4zMSwzMC44MSAyOC45NiwzMS4yNCAyOC42NiwzMS43NCAyOC4zNSwzMi4yNyAyNy45OSwzMi43OSAyNy41NywzMy4yMSAyNy4wOSwzMy41NiAyNi41OCwzMy44NSAyNi4wMywzNC4wNiAyNS40NSwzNC4xOSAyNC44NSwzNC4xOCAyNC4yNCwzNC4wNiAyMy42NSwzMy45MyAyMy4wOCwzMy44NSAyMi41MSwzMy44NCAyMS4xNiwzNC4yNSAyMC44OCwzNS42MiAyMC44NSwzNi4yMiAyMC44MCwzNi44MiAyMC43NCwzNy40MiAyMC43MCwzOC4wMiAyMC43MCwzOC42MyAyMC43MywzOS4yMyAyMC43OCwzOS44MyAyMC44Miw0MC40MyAyMC44Miw0MS4wMyAyMC43OSw0MS42MyAyMC43Miw0Mi4yMyAyMC42NCw0Mi44MyAyMC41NSw0My40MyAyMC40Nyw0NC4wNCAyMC4zOSw0NC42NCAyMC4zMyw0NS4yNCAyMC4yOCw0NS44NCAyMC4yNSw0Ni40NCAyMC4yNSw0Ny4wNCAyMC4zMSw0Ny42NCAyMC40MSw0OC4yNCAyMC41OCw0OC44NSAyMC43Nyw0OS40NSAyMC45NCw1MC4wNSAyMS4wNSw1MC42NSAyMS4xNCw1MS4yNSAyMS4xOSw1MS44NSAyMS4yMSw1Mi40NSAyMS4yMSw1My4wNSAyMS4xNiw1My42NSAyMS4xMCw1NC4yNiAyMS4wNiw1NC44NiAyMS4wMyw1NS40NiAyMS4wMCw1Ni4wNiAyMC45OCw1Ni42NiAyMC45OSw1Ny4yNiAyMS4wMSw1Ny44NiAyMS4wNSw1OC40NiAyMS4xMCw1OS4wNiAyMS4xNCw1OS42NyAyMS4xNiw2MC4yNyAyMS4xOSw2MC44NyAyMS4yMiw2MS40NyAyMS4yNSw2Mi4wNyAyMS4yNSw2Mi42NyAyMS4yMyw2My4yNyAyMS4yMCw2My44NyAyMS4xNyw2NC40NyAyMS4xNiw2NS4wOCAyMS4xMiw2NS42OCAyMS4wOCw2Ni4yOCAyMS4wMyw2Ni44OCAyMC45OSw2Ny40OCAyMC45Nyw2OC4wOCAyMC45NSw2OC42OCAyMC45MSw2OS4yOCAyMC44Myw2OS44OSAyMC43NSw3MC40OSAyMC42Nyw3MS4wOSAyMC42Miw3MS42OSAyMC42Niw3Mi4yOSAyMC43Niw3Mi44OSAyMC44Nyw3My40OSAyMC45Myw3NC4wOSAyMC45Myw3NC42OSAyMC44OSw3NS4zMCAyMC44Niw3NS45MCAyMC44Nyw3Ni41MCAyMC44OCw3Ny4xMCAyMC44Nyw3Ny43MCAyMC44NCw3OC4zMCAyMC43Nyw3OC45MCAyMC42NSw3OS41MCAyMC40OSw4MC4xMCAyMC4zMiw4MC43MSAyMC4xNSw4MS4zMSAxOS45OCw4MS45MSAxOS44Miw4Mi41MSAxOS43MSw4My4xMSAxOS42OCw4My43MSAxOS42OSw4NC4zMSAxOS43Miw4NC45MSAxOS43Nyw4NS41MiAxOS44NSw4Ni4xMiAxOS45NSw4Ni43MiAyMC4wNCw4Ny4zMiAyMC4xMSw4Ny45MiAyMC4xNSw4OC41MiAyMC4xNyw4OS4xMiAyMC4yMyw4OS43MiAyMC4zMiw5MC4zMiAyMC40MSw5MC45MyAyMC41MSw5MS41MyAyMC42MSw5Mi4xMyAyMC43MSw5Mi43MyAyMC44MCw5My4zMyAyMC44OCw5My45MyAyMC45NSw5NC42NiAyMS41Niw5NS44NyAyMi42Nyw5Ni4xMSAyMy4yMSw5Ni4yOSAyMy43Miw5Ni41MyAyNC4yMiw5Ni43OSAyNC43MSw5Ni45OSAyNS4yMCw5Ny4xOCAyNS43MCw5Ny4zNSAyNi4xOCw5Ny41NCAyNi42NCw5Ny43OCAyNy4xMSw5OC4wMSAyNy41Nyw5OC4yNSAyOC4wMCw5OC41NCAyOC4zNiw5OC45MiAyOC43MSw5OS4zMiAyOS4wNCw5OS43MCAyOS4zOSwxMDAuMDcgMjkuNzYsMTAwLjQwIDMwLjE1LDEwMC43MyAzMC41NCwxMDEuMDYgMzAuOTQsMTAxLjQwIDMxLjMyLDEwMS43NyAzMS42NCwxMDIuMTggMzEuOTAsMTAyLjYzIDMyLjE1LDEwMy4wOSAzMi4zOCwxMDMuNTYgMzIuNjIsMTA0LjAyIDMyLjg3LDEwNC41MCAzMy4wOCwxMDQuOTggMzMuMjQsMTA1LjQ5IDMzLjM2LDEwNi4wMSAzMy40NSwxMDYuNTQgMzMuNTIsMTA3LjA3IDMzLjU4LDEwNy44MSAzNC40MSwxMDkuMjUgMzUuNzUsMTA5LjQ3IDM2LjM1LDEwOS40OCAzNi45NiwxMDkuNDUgMzcuNTYsMTA5LjQxIDM4LjE2LDEwOS4zNiAzOC43NiwxMDkuMzIgMzkuMzYsMTA5LjI5IDM5Ljk2LDEwOS4yMSA0MC41NiwxMDkuMTQgNDEuMTYsMTA5LjA1IDQxLjc2LDEwOC45OCA0Mi4zNywxMDguOTMgNDIuOTcsMTA4Ljg3IDQzLjU3LDEwOC43OSA0NC4xNywxMDguNzEgNDQuNzcsMTA4LjY3IDQ1LjM3LDEwOC42OCA0NS45NywxMDguNzEgNDYuNTcsMTA4LjcyIDQ3LjE4LDEwOC43MCA0Ny43OCwxMDguNjkgNDguMzgsMTA4LjcyIDQ4Ljk4LDEwOC43OSA0OS41OCwxMDguODUgNTAuMTgsMTA4Ljg5IDUwLjc4LDEwOC45MSA1MS4zOCwxMDguOTcgNTEuOTgsMTA5LjA4IDUyLjU5LDEwOS4xOCA1My4xOSwxMDkuMjMgNTMuNzksMTA5LjI2IDU0LjM5LDEwOS4yOSA1NC45OSwxMDkuMzMgNTUuNTksMTA5LjM1IDU2LjE5LDEwOS4zNCA1Ni43OSwxMDkuMzEgNTcuMzksMTA5LjMzIDU4LjAwLDEwOS40MCA1OC42MCwxMDkuNDggNTkuMjAsMTA5LjU0IDU5LjgwLDEwOS42MCA2MC40MCwxMDkuNjUgNjEuMDAsMTA5LjY3IDYxLjYwLDEwOS42NiA2Mi4yMCwxMDkuNjEgNjIuODAsMTA5LjU1IDYzLjQxLDEwOS41MSA2NC4wMSwxMDkuNDcgNjQuNjEsMTA5LjQzIDY1LjIxLDEwOS4zOSA2NS44MSwxMDkuMzggNjYuNDEsMTA5LjQwIDY3LjAxLDEwOS40MiA2Ny42MSwxMDkuMzkgNjguMjIsMTA5LjM0IDY4LjgyLDEwOS4yOCA2OS40MiwxMDkuMjEgNzAuMDIsMTA5LjEyIDcwLjYyLDEwOC45OSA3MS4yMiwxMDguODQgNzEuODIsMTA4LjczIDcyLjQyLDEwOC42OCA3My4wMiwxMDguNzEgNzMuNjMsMTA4Ljc4IDc0LjIzLDEwOC44NiA3NC44MywxMDguOTEgNzUuNDMsMTA4Ljk2IDc2LjAzLDEwOS4wMSA3Ni42MywxMDkuMDYgNzcuMjMsMTA5LjEyIDc3LjgzLDEwOS4xMiA3OC40MywxMDkuMTAgNzkuMDQsMTA5LjA4IDc5LjY0LDEwOS4xMCA4MC4yNCwxMDkuMDkgODAuODQsMTA5LjA2IDgxLjQ0LDEwOS4wNCA4Mi4wNCwxMDkuMDQgODIuNjQsMTA5LjA0IDgzLjI0LDEwOS4wNSA4My44NSwxMDkuMDUgODQuNDUsMTA5LjA1IDg1LjA1LDEwOS4xMSA4NS42NSwxMDkuMTkgODYuMjUsMTA5LjIzIDg2Ljg1LDEwOS4yMCA4Ny40NSwxMDkuMTYgODguMDUsMTA5LjExIDg4LjY1LDEwOS4wNSA4OS4yNiwxMDguOTkgODkuODYsMTA4LjkwIDkwLjQ2LDEwOC44MiA5MS4wNiwxMDguNzUgOTEuNjYsMTA4Ljc0IDkyLjI2LDEwOC43NyA5Mi44NiwxMDguODQgOTMuNDYsMTA4LjkxIDk0LjA2LDEwOC45OSA5NC42NywxMDkuMTIgOTUuMjcsMTA5LjI2IDk1Ljg3LDEwOS40MCA5Ni40NywxMDkuNTIgOTcuMDcsMTA5LjYxIDk3LjY3LDEwOS42NiA5OC4yNywxMDkuNzAgOTguODcsMTA5LjcwIDk5LjQ3LDEwOS42MyAxMDAuMDgsMTA5LjUzIDEwMC42OCwxMDkuNDQgMTAxLjI4LDEwOS4zNyAxMDEuODgsMTA5LjMzIDEwMi40OCwxMDkuMjkgMTAzLjA4LDEwOS4yMyAxMDMuNjgsMTA5LjE3IDEwNC4yOCwxMDkuMTYgMTA0Ljg5LDEwOS4xOSAxMDUuNDksMTA5LjI0IDEwNi4wOSwxMDkuMjMgMTA2LjY5LDEwOS4xNiAxMDcuMjksMTA5LjEwIDEwNy44OSwxMDkuMTIgMTA4LjQ5LDEwOS4yMiAxMDkuMDksMTA5LjMzIDEwOS42OSwxMDkuNDAgMTEwLjMwLDEwOS40MiAxMTAuOTAsMTA5LjM4IDExMS41MCwxMDkuMzIgMTEyLjEwLDEwOS4yNiAxMTIuNzAsMTA5LjIzIDExMy4zMCwxMDkuMjIgMTEzLjkwLDEwOS4yNCAxMTQuNTAsMTA5LjI2IDExNS4xMCwxMDkuMjcgMTE1LjcxLDEwOS4yNiAxMTYuMzEsMTA5LjI0IDExNi45MSwxMDkuMjQgMTE3LjUxLDEwOS4yOCAxMTguMTEsMTA5LjM1IDExOC43MSwxMDkuNDMgMTE5LjMxLDEwOS41MSAxMTkuOTEsMTA5LjU3IDEyMC41MiwxMDkuNTggMTIxLjEyLDEwOS41NCAxMjEuNzIsMTA5LjQ4IDEyMi4zMiwxMDkuNDIgMTIyLjkyLDEwOS4zOCAxMjMuNTIsMTA5LjM0IDEyNC4xMiwxMDkuMzAgMTI0LjcyLDEwOS4yNyAxMjUuMzIsMTA5LjMyIDEyNS45MywxMDkuNDMgMTI2LjUzLDEwOS41NCAxMjcuMTMsMTA5LjYxIDEyNy43MywxMDkuNjMgMTI4LjMzLDEwOS42NCAxMjguOTMsMTA5LjY1IDEyOS41MywxMDkuNjggMTMwLjEzLDEwOS43MiAxMzAuNzMsMTA5Ljc1IDEzMS4zNCwxMDkuNzggMTMxLjk0LDEwOS44MiAxMzIuNTQsMTA5Ljg4IDEzMy4xNCwxMDkuOTMgMTMzLjc0LDEwOS45NiAxMzQuMzQsMTA5Ljk2IDEzNC45NCwxMDkuOTEgMTM1LjU0LDEwOS44MyAxMzYuMTQsMTA5Ljc0IDEzNi43NSwxMDkuNjIgMTM3LjM1LDEwOS40OCAxMzcuOTUsMTA5LjMzIDEzOC41NSwxMDkuMTcgMTM5LjE1LDEwOS4wMiAxMzkuNzUsMTA4Ljk0IDE0MC4zNSwxMDguOTIgMTQwLjk1LDEwOC45MiAxNDEuNTYsMTA4LjkyIDE0Mi4xNiwxMDguOTYgMTQyLjc2LDEwOS4wMiAxNDMuMzYsMTA5LjA4IDE0My45NiwxMDkuMTQgMTQ0LjU2LDEwOS4yMSAxNDUuMTYsMTA5LjI4IDE0NS43NiwxMDkuMzIgMTQ2LjM2LDEwOS4zMCAxNDYuOTcsMTA5LjIyIDE0Ny41NywxMDkuMTQgMTQ4LjE3LDEwOS4xMCAxNDguNzcsMTA5LjE1IDE0OS4zNywxMDkuMjQgMTQ5Ljk3LDEwOS4zMyAxNTAuNTcsMTA5LjQxIDE1MS4xNywxMDkuNDUgMTUxLjc3LDEwOS40NSAxNTIuMzgsMTA5LjQxIDE1Mi45OCwxMDkuMzUgMTUzLjU4LDEwOS4zMSAxNTQuMTgsMTA5LjMwIDE1NC43OCwxMDkuMjggMTU1LjM4LDEwOS4yMyAxNTUuOTgsMTA5LjE2IDE1Ni41OCwxMDkuMTAgMTU3LjE5LDEwOS4wNyAxNTcuNzksMTA5LjA2IDE1OC4zOSwxMDkuMDIgMTU4Ljk5LDEwOC45NCAxNTkuNTksMTA4Ljg1IDE2MC4xOSwxMDguNzkgMTYwLjc5LDEwOC43NCAxNjEuMzksMTA4LjY3IDE2MS45OSwxMDguNjEgMTYyLjYwLDEwOC41OSAxNjMuMjAsMTA4LjY0IDE2My44MCwxMDguNzUgMTY0LjQwLDEwOC44OCAxNjUuNjksMTA4LjcxIDE2Ni4wOCwxMDcuNDUgMTY2LjE2LDEwNi45MCAxNjYuMjYsMTA2LjM2IDE2Ni4zOSwxMDUuODMgMTY2LjU2LDEwNS4zMSAxNjYuNzUsMTA0LjgwIDE2Ni45NiwxMDQuMzAgMTY3LjE4LDEwMy44MSAxNjcuNDMsMTAzLjMzIDE2Ny42OSwxMDIuODYgMTY3Ljk3LDEwMi40MSAxNjguMjYsMTAxLjk2IDE2OC41NCwxMDEuNTEgMTY4Ljg0LDEwMS4wNyAxNjkuMTYsMTAwLjY1IDE2OS41MSwxMDAuMjUgMTY5LjkxLDk5Ljg5IDE3MC4zMiw5OS41NiAxNzAuNzQsOTkuMjQgMTcxLjE1LDk4LjkyIDE3MS41Niw5OC41OSAxNzEuOTgsOTguMjYgMTcyLjQwLDk3LjkzIDE3Mi44Myw5Ny41OSAxNzMuMjcsOTcuMjUgMTczLjczLDk2LjkzIDE3NC4yMCw5Ni42MyAxNzQuNzEsOTYuMzggMTc1LjI0LDk2LjE5IDE3NS43OCw5Ni4wNiAxNzYuMzQsOTYuMDAgMTc2LjkxLDk2LjAyIDE3Ny40OSw5Ni4xNiAxNzkuMDIsOTUuOTIgMTc5LjYzLDk0LjM4IDE3OS44NSw5My43OCAxODAuMDUsOTMuMTggMTgwLjIxLDkyLjU4IDE4MC4zMiw5MS45OCAxODAuMzQsOTEuMzcgMTgwLjMyLDkwLjc3IDE4MC4yOCw5MC4xNyAxODAuMjIsODkuNTcgMTgwLjEwLDg4Ljk3IDE3OS45Nyw4OC4zNyAxNzkuODQsODcuNzcgMTc5LjcxLDg3LjE3IDE3OS41OSw4Ni41NyAxNzkuNDUsODUuOTYgMTc5LjI5LDg1LjM2IDE3OS4xNSw4NC43NiAxNzkuMDcsODQuMTYgMTc5LjA3LDgzLjU2IDE3OS4xMSw4Mi45NiAxNzkuMTQsODIuMzYgMTc5LjExLDgxLjc2IDE3OS4wMyw4MS4xNSAxNzguOTMsODAuNTUgMTc4Ljg0LDc5Ljk1IDE3OC43OCw3OS4zNSAxNzguNzQsNzguNzUgMTc4LjcwLDc4LjE1IDE3OC42NSw3Ny41NSAxNzguNTgsNzYuOTUgMTc4LjUyLDc2LjM1IDE3OC40Niw3NS43NCAxNzguNDUsNzUuMTQgMTc4LjQ5LDc0LjU0IDE3OC42MCw3My45NCAxNzguNzMsNzMuMzQgMTc4Ljg2LDcyLjc0IDE3OC45NCw3Mi4xNCAxNzkuMDAsNzEuNTQgMTc5LjAzLDcwLjk0IDE3OS4wNSw3MC4zMyAxNzkuMDIsNjkuNzMgMTc4LjkyLDY5LjEzIDE3OC43OCw2OC41MyAxNzguNjIsNjcuOTMgMTc4LjQ3LDY3LjMzIDE3OC4zNSw2Ni43MyAxNzguMjYsNjYuMTMgMTc4LjIwLDY1LjUzIDE3OC4xOSw2NC45MiAxNzguMjMsNjQuMzIgMTc4LjI4LDYzLjcyIDE3OC4zNCw2My4xMiAxNzguNDAsNjIuNTIgMTc4LjQ3LDYxLjkyIDE3OC41NSw2MS4zMiAxNzguNjEsNjAuNzIgMTc4LjYzLDYwLjExIDE3OC42MCw1OS41MSAxNzguNjEsNTguOTEgMTc4LjY3LDU4LjMxIDE3OC43NCw1Ny43MSAxNzguNzcsNTcuMTEgMTc4Ljc5LDU2LjUxIDE3OC44NSw1NS45MSAxNzguOTQsNTUuMzEgMTc5LjAxLDU0LjcwIDE3OS4wNCw1NC4xMCAxNzkuMDYsNTMuNTAgMTc5LjEwLDUyLjkwIDE3OS4xNSw1Mi4zMCAxNzkuMjEsNTEuNzAgMTc5LjI2LDUxLjEwIDE3OS4zMiw1MC41MCAxNzkuMzcsNDkuOTAgMTc5LjQxLDQ5LjI5IDE3OS40Miw0OC42OSAxNzkuNDAsNDguMDkgMTc5LjM2LDQ3LjQ5IDE3OS4zMiw0Ni44OSAxNzkuMzEsNDYuMjkgMTc5LjM0LDQ1LjY5IDE3OS4zOSw0NS4wOSAxNzkuNDQsNDQuNDggMTc5LjQ4LDQzLjg4IDE3OS41NCw0My4yOCAxNzkuNTcsNDIuNjggMTc5LjUyLDQyLjA4IDE3OS4zNiw0MS40OCAxNzkuMTIsNDAuODggMTc4Ljg0LDQwLjI4IDE3OC41OSwzOS42OCAxNzguNDMsMzkuMDcgMTc4LjMxLDM4LjQ3IDE3OC4yMywzNy44NyAxNzguMjIsMzcuMjcgMTc4LjI4LDM2LjY3IDE3OC40MCwzNi4wNyAxNzguNTMsMzUuNDAgMTc4LjIzLDM0LjQ1IDE3Ny4zMSwzNC4yMyAxNzYuNzUsMzQuMTEgMTc2LjIwLDM0LjAwIDE3NS42NSwzMy44NyAxNzUuMTEsMzMuNzIgMTc0LjYwLDMzLjUwIDE3NC4xMCwzMy4yNCAxNzMuNjEsMzIuOTcgMTczLjE0LDMyLjcxIDE3Mi42OCwzMi40MSAxNzIuMjQsMzIuMDggMTcxLjgxLDMxLjc3IDE3MS4zNCwzMS41MCAxNzAuODIsMzEuMzAgMTcwLjI2LDMxLjExIDE2OS43MiwzMC44OCAxNjkuMjUsMzAuNTYgMTY4LjgzLDMwLjE4IDE2OC40NiwyOS43NSAxNjguMTIsMjkuMjkgMTY3Ljc5LDI4LjgzIDE2Ny40OSwyOC4zNSAxNjcuMjEsMjcuODUgMTY2Ljk4LDI3LjMzIDE2Ni44MSwyNi43OSAxNjYuNjYsMjYuMjQgMTY2LjUzLDI1LjcwIDE2Ni40MiwyNS4xNSAxNjYuMzAsMjQuNjEgMTY2LjE2LDI0LjA3IDE2Ni4wNSwyMy41MyAxNjYuMDEsMjIuOTcgMTY2LjAzLDIyLjI2IDE2NS40MiwyMS4wMyAxNjQuMjUsMjAuNzggMTYzLjY1LDIwLjcxIDE2My4wNCwyMC42OSAxNjIuNDQsMjAuNzIgMTYxLjg0LDIwLjc4IDE2MS4yNCwyMC44NiAxNjAuNjQsMjAuODggMTYwLjA0LDIwLjgyIDE1OS40NCwyMC43NSAxNTguODQsMjAuNzQgMTU4LjI0LDIwLjgzIDE1Ny42MywyMC45MyAxNTcuMDMsMjEuMDEgMTU2LjQzLDIxLjAyIDE1NS44MywyMC45NyAxNTUuMjMsMjAuOTIgMTU0LjYzLDIwLjg3IDE1NC4wMywyMC44MCAxNTMuNDMsMjAuNzAgMTUyLjgyLDIwLjU3IDE1Mi4yMiwyMC40NiAxNTEuNjIsMjAuNDAgMTUxLjAyLDIwLjM2IDE1MC40MiwyMC4zMSAxNDkuODIsMjAuMjggMTQ5LjIyLDIwLjMwIDE0OC42MiwyMC4zOCAxNDguMDIsMjAuNDggMTQ3LjQxLDIwLjU5IDE0Ni44MSwyMC42OSAxNDYuMjEsMjAuNzYgMTQ1LjYxLDIwLjgxIDE0NS4wMSwyMC44NiAxNDQuNDEsMjAuOTMgMTQzLjgxLDIxLjA0IDE0My4yMSwyMS4xOCAxNDIuNjEsMjEuMjkgMTQyLjAwLDIxLjMzIDE0MS40MCwyMS4zOSAxNDAuODAsMjEuNDIgMTQwLjIwLDIxLjQzIDEzOS42MCwyMS40NSAxMzkuMDAsMjEuNDggMTM4LjQwLDIxLjM0IDEzNy44MCwyMS4xOCAxMzcuMjAsMjEuMTMgMTM2LjU5LDIxLjE2IDEzNS45OSwyMS4yMiAxMzUuMzksMjEuMjYgMTM0Ljc5LDIxLjI1IDEzNC4xOSwyMS4xOSAxMzMuNTksMjEuMTEgMTMyLjk5LDIxLjAyIDEzMi4zOSwyMC45NyAxMzEuNzgsMjAuOTMgMTMxLjE4LDIwLjkyIDEzMC41OCwyMC45MCAxMjkuOTgsMjAuODcgMTI5LjM4LDIwLjg1IDEyOC43OCwyMC44NSAxMjguMTgsMjAuODQgMTI3LjU4LDIwLjgxIDEyNi45OCwyMC43NCAxMjYuMzcsMjAuNjcgMTI1Ljc3LDIwLjYyIDEyNS4xNywyMC42MSAxMjQuNTcsMjAuNjIgMTIzLjk3LDIwLjYzIDEyMy4zNywyMC42NCAxMjIuNzcsMjAuNjUgMTIyLjE3LDIwLjY3IDEyMS41NywyMC42OCAxMjAuOTYsMjAuNzAgMTIwLjM2LDIwLjcyIDExOS43NiwyMC43MiAxMTkuMTYsMjAuNzIgMTE4LjU2LDIwLjczIDExNy45NiwyMC43NiAxMTcuMzYsMjAuODAgMTE2Ljc2LDIwLjg0IDExNi4xNSwyMC44OSAxMTUuNTUsMjAuOTQgMTE0Ljk1LDIxLjAyIDExNC4zNSwyMS4xMCAxMTMuNzUsMjEuMTUgMTEzLjE1LDIxLjE5IDExMi41NSwyMS4yNCAxMTEuOTUsMjEuMjkgMTExLjM1LDIxLjMzIDExMC43NCwyMS4zMSAxMTAuMTQsMjEuMjEgMTA5LjU0LDIxLjA4IDEwOC45NCwyMS4wMSAxMDguMzQsMjEuMDQgMTA3Ljc0LDIxLjExIDEwNy4xNCwyMS4xOSAxMDYuNTQsMjEuMjggMTA1Ljk0LDIxLjM3IDEwNS4zMywyMS40NiAxMDQuNzMsMjEuNTMgMTA0LjEzLDIxLjU1IDEwMy41MywyMS41MyAxMDIuOTMsMjEuNTEgMTAyLjMzLDIxLjQ4IDEwMS43MywyMS40MSAxMDEuMTMsMjEuMzMgMTAwLjUzLDIxLjMyIDk5LjkyLDIxLjMyIDk5LjMyLDIxLjMxIDk4LjcyLDIxLjI1IDk4LjEyLDIxLjEzIDk3LjUyLDIxLjAxIDk2LjkyLDIwLjk0IDk2LjMyLDIwLjk1IDk1LjcyLDIwLjk4IDk1LjExLDIxLjAxIDk0LjUxLDIxLjAyIDkzLjkxLDIxLjAzIDkzLjMxLDIxLjA2IDkyLjcxLDIxLjEwIDkyLjExLDIxLjEzIDkxLjUxLDIxLjE4IDkwLjkxLDIxLjI0IDkwLjMxLDIxLjMxIDg5LjcwLDIxLjM1IDg5LjEwLDIxLjM1IDg4LjUwLDIxLjMzIDg3LjkwLDIxLjMwIDg3LjMwLDIxLjI5IDg2LjcwLDIxLjMwIDg2LjEwLDIxLjM1IDg1LjUwLDIxLjM5IDg0LjkwLDIxLjQyIDg0LjI5LDIxLjQxIDgzLjY5LDIxLjM3IDgzLjA5LDIxLjMzIDgyLjQ5LDIxLjMxIDgxLjg5LDIxLjMzIDgxLjI5LDIxLjM2IDgwLjY5LDIxLjM5IDgwLjA5LDIxLjM5IDc5LjQ4LDIxLjQwIDc4Ljg4LDIxLjQwIDc4LjI4LDIxLjQxIDc3LjY4LDIxLjQwIDc3LjA4LDIxLjM2IDc2LjQ4LDIxLjI5IDc1Ljg4LDIxLjI0IDc1LjI4LDIxLjIyIDc0LjY4LDIxLjI1IDc0LjA3LDIxLjI4IDczLjQ3LDIxLjMyIDcyLjg3LDIxLjM2IDcyLjI3LDIxLjM0IDcxLjY3LDIxLjMwIDcxLjA3LDIxLjI4IDcwLjQ3LDIxLjMyIDY5Ljg3LDIxLjQxIDY5LjI3LDIxLjUxIDY4LjY2LDIxLjU5IDY4LjA2LDIxLjYxIDY3LjQ2LDIxLjYxIDY2Ljg2LDIxLjU3IDY2LjI2LDIxLjQ5IDY1LjY2LDIxLjM2IDY1LjA2LDIxLjIwIDY0LjQ2LDIxLjAyIDYzLjg2LDIwLjgyIDYzLjI1LDIwLjYyIDYyLjY1LDIwLjQyIDYyLjA1LDIwLjI2IDYxLjQ1LDIwLjE3IDYwLjg1LDIwLjE3IDYwLjI1LDIwLjIxIDU5LjY1LDIwLjMwIDU5LjA1LDIwLjQyIDU4LjQ0LDIwLjU2IDU3Ljg0LDIwLjc2IDU3LjI0LDIwLjk2IDU2LjY0LDIxLjA5IDU2LjA0LDIxLjA3IDU1LjQ0LDIwLjkwIDU0Ljg0LDIwLjY2IDU0LjI0LDIwLjQ0IDUzLjY0LDIwLjMwIDUzLjAzLDIwLjIwIDUyLjQzLDIwLjEzIDUxLjgzLDIwLjA3IDUxLjIzLDIwLjAxIDUwLjYzLDE5Ljk4IDUwLjAzLDIwLjAwIDQ5LjQzLDIwLjA5IDQ4LjgzLDIwLjI0IDQ4LjIzLDIwLjQxIDQ3LjYyLDIwLjYwIDQ3LjAyLDIwLjc2IDQ2LjQyLDIwLjg5IDQ1LjgyLDIxLjAwIDQ1LjIyLDIxLjA3IDQ0LjYyLDIxLjEyIDQ0LjAyLDIxLjE2IDQzLjQyLDIxLjE4IDQyLjgxLDIxLjE5IDQyLjIxLDIxLjE4IDQxLjYxLDIxLjEyIDQxLjAxLDIwLjk4IDQwLjQxLDIwLjgzIDM5LjgxLDIwLjcyIDM5LjIxLDIwLjY3IDM4LjYxLDIwLjY3IDM4LjAxLDIwLjY4IDM3LjQwLDIwLjY2IDM2LjgwLDIwLjY0IDM2LjIwLDIwLjY2IDM1LjYwLDIwLjcwIDM1LjAwLDIwLjcyIFoiLz48cGF0aCBmaWxsPSIjN2E0ZTI2IiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0gMzcuMDAsMjguMjQgMzcuNjAsMjguMjggMzguMjAsMjguMzYgMzguODAsMjguNDUgMzkuNDEsMjguNTEgNDAuMDEsMjguNTEgNDAuNjEsMjguNDggNDEuMjEsMjguNDYgNDEuODEsMjguNDcgNDIuNDEsMjguNTAgNDMuMDIsMjguNTMgNDMuNjIsMjguNTQgNDQuMjIsMjguNTMgNDQuODIsMjguNTEgNDUuNDIsMjguNDggNDYuMDIsMjguNDUgNDYuNjMsMjguNDMgNDcuMjMsMjguNDEgNDcuODMsMjguNDIgNDguNDMsMjguNDUgNDkuMDMsMjguNDkgNDkuNjMsMjguNTMgNTAuMjQsMjguNTcgNTAuODQsMjguNjEgNTEuNDQsMjguNjYgNTIuMDQsMjguNzQgNTIuNjQsMjguODAgNTMuMjQsMjguODQgNTMuODUsMjguODMgNTQuNDUsMjguODAgNTUuMDUsMjguNzUgNTUuNjUsMjguNzAgNTYuMjUsMjguNjUgNTYuODUsMjguNTkgNTcuNDYsMjguNTQgNTguMDYsMjguNTAgNTguNjYsMjguNDcgNTkuMjYsMjguNDQgNTkuODYsMjguNDEgNjAuNDYsMjguMzcgNjEuMDcsMjguMzYgNjEuNjcsMjguMzUgNjIuMjcsMjguMzUgNjIuODcsMjguMzQgNjMuNDcsMjguMzQgNjQuMDcsMjguMzEgNjQuNjgsMjguMjkgNjUuMjgsMjguMjggNjUuODgsMjguMzAgNjYuNDgsMjguMzUgNjcuMDgsMjguNDIgNjcuNjgsMjguNDcgNjguMjksMjguNDcgNjguODksMjguNDYgNjkuNDksMjguNDIgNzAuMDksMjguMzkgNzAuNjksMjguMzcgNzEuMjksMjguMzMgNzEuOTAsMjguMzAgNzIuNTAsMjguMjcgNzMuMTAsMjguMjcgNzMuNzAsMjguMzAgNzQuMzAsMjguMzUgNzQuOTAsMjguMzkgNzUuNTEsMjguNDMgNzYuMTEsMjguNDggNzYuNzEsMjguNTMgNzcuMzEsMjguNTYgNzcuOTEsMjguNTggNzguNTEsMjguNTkgNzkuMTIsMjguNjAgNzkuNzIsMjguNTkgODAuMzIsMjguNTggODAuOTIsMjguNTQgODEuNTIsMjguNTAgODIuMTIsMjguNDUgODIuNzIsMjguNDAgODMuMzMsMjguMzYgODMuOTMsMjguMzMgODQuNTMsMjguMzEgODUuMTMsMjguMjkgODUuNzMsMjguMjYgODYuMzMsMjguMjQgODYuOTQsMjguMjQgODcuNTQsMjguMjYgODguMTQsMjguMjkgODguNzQsMjguMzEgODkuMzQsMjguMzMgODkuOTQsMjguMzQgOTAuNTUsMjguMzUgOTEuMTUsMjguMzcgOTEuNzUsMjguNDAgOTIuMzUsMjguNDMgOTIuOTUsMjguNDQgOTMuNTUsMjguNDUgOTQuMTYsMjguNDkgOTQuNzYsMjguNTUgOTUuMzYsMjguNjIgOTUuOTYsMjguNjggOTYuNTYsMjguNjkgOTcuMTYsMjguNjggOTcuNzcsMjguNjUgOTguMzcsMjguNjIgOTguOTcsMjguNjIgOTkuNTcsMjguNjMgMTAwLjE3LDI4LjY0IDEwMC43NywyOC42NSAxMDEuMzgsMjguNjYgMTAxLjk4LDI4LjY3IDEwMi41OCwyOC42OCAxMDMuMTgsMjguNjkgMTAzLjc4LDI4LjcwIDEwNC4zOCwyOC42OCAxMDQuOTksMjguNjUgMTA1LjU5LDI4LjYyIDEwNi4xOSwyOC42MSAxMDYuNzksMjguNjAgMTA3LjM5LDI4LjU5IDEwNy45OSwyOC41NiAxMDguNjAsMjguNTAgMTA5LjIwLDI4LjQ1IDEwOS44MCwyOC40MCAxMTAuNDAsMjguMzcgMTExLjAwLDI4LjM2IDExMS42MCwyOC4zNSAxMTIuMjEsMjguMzYgMTEyLjgxLDI4LjM5IDExMy40MSwyOC40MiAxMTQuMDEsMjguNDIgMTE0LjYxLDI4LjQwIDExNS4yMSwyOC40MCAxMTUuODIsMjguNDYgMTE2LjQyLDI4LjU2IDExNy4wMiwyOC42NiAxMTcuNjIsMjguNzIgMTE4LjIyLDI4LjcwIDExOC44MiwyOC42NSAxMTkuNDMsMjguNTkgMTIwLjAzLDI4LjU0IDEyMC42MywyOC41MCAxMjEuMjMsMjguNDYgMTIxLjgzLDI4LjQzIDEyMi40MywyOC40MCAxMjMuMDMsMjguMzkgMTIzLjY0LDI4LjQwIDEyNC4yNCwyOC40MSAxMjQuODQsMjguNDQgMTI1LjQ0LDI4LjQ2IDEyNi4wNCwyOC40NyAxMjYuNjQsMjguNDkgMTI3LjI1LDI4LjUwIDEyNy44NSwyOC41MSAxMjguNDUsMjguNTQgMTI5LjA1LDI4LjU4IDEyOS42NSwyOC42MSAxMzAuMjUsMjguNjUgMTMwLjg2LDI4LjcwIDEzMS40NiwyOC43NCAxMzIuMDYsMjguNzcgMTMyLjY2LDI4Ljc3IDEzMy4yNiwyOC43NCAxMzMuODYsMjguNzEgMTM0LjQ3LDI4LjcxIDEzNS4wNywyOC43MiAxMzUuNjcsMjguNzQgMTM2LjI3LDI4Ljc2IDEzNi44NywyOC43NSAxMzcuNDcsMjguNzMgMTM4LjA4LDI4LjY5IDEzOC42OCwyOC42NCAxMzkuMjgsMjguNjEgMTM5Ljg4LDI4LjU3IDE0MC40OCwyOC41NSAxNDEuMDgsMjguNTIgMTQxLjY5LDI4LjUwIDE0Mi4yOSwyOC40OCAxNDIuODksMjguNDggMTQzLjQ5LDI4LjQ4IDE0NC4wOSwyOC40OSAxNDQuNjksMjguNDkgMTQ1LjMwLDI4LjQ5IDE0NS45MCwyOC40OCAxNDYuNTAsMjguNDcgMTQ3LjEwLDI4LjQ2IDE0Ny43MCwyOC40NiAxNDguMzAsMjguNDcgMTQ4LjkxLDI4LjQ4IDE0OS41MSwyOC40OSAxNTAuMTEsMjguNDkgMTUwLjcxLDI4LjUxIDE1MS4zMSwyOC41NCAxNTEuOTEsMjguNTggMTUyLjUyLDI4LjYyIDE1My4xMiwyOC42NiAxNTMuNzIsMjguNjcgMTU0LjMyLDI4LjY3IDE1NC45MiwyOC42NiAxNTUuNTIsMjguNjQgMTU2LjEzLDI4LjU5IDE1Ni43MywyOC40OSAxNTcuMzMsMjguMzkgMTU3LjkzLDI4LjMwIDE1OC41MywyOC4yOCAxNTkuMTMsMjguMzAgMTU5Ljc0LDI4LjM2IDE2MC4zNCwyOC40MSAxNjAuOTQsMjguNDEgMTYxLjU0LDI4LjQwIDE2Mi4xNCwyOC4zOCAxNjIuNjEsMjguMzQgMTYyLjY1LDI4LjQ2IDE2Mi42NiwyOC45OSAxNjIuNzMsMjkuNjEgMTYyLjg1LDMwLjIzIDE2Mi45OCwzMC44NSAxNjMuMTUsMzEuNDYgMTYzLjM0LDMyLjA3IDE2My41NywzMi42OCAxNjMuODQsMzMuMjcgMTY0LjE3LDMzLjgzIDE2NC41OSwzNC4zMyAxNjUuMDUsMzQuNzkgMTY1LjU1LDM1LjIxIDE2Ni4wNywzNS41OCAxNjYuNjIsMzUuOTIgMTY3LjE4LDM2LjIzIDE2Ny43NSwzNi41MSAxNjguMzMsMzYuNzkgMTY4LjkxLDM3LjA0IDE2OS41MiwzNy4yNCAxNzAuMTQsMzcuMzkgMTcwLjc3LDM3LjUxIDE3MS4zOCwzNy41OSAxNzEuNTAsMzcuNDYgMTcxLjMxLDM3LjY1IDE3MS4yOCwzOC4yNSAxNzEuMjQsMzguODUgMTcxLjIwLDM5LjQ1IDE3MS4xNCw0MC4wNSAxNzEuMDcsNDAuNjYgMTcxLjA1LDQxLjI2IDE3MS4wNSw0MS44NiAxNzEuMDUsNDIuNDYgMTcxLjA5LDQzLjA2IDE3MS4xNyw0My42NiAxNzEuMjAsNDQuMjcgMTcxLjIxLDQ0Ljg3IDE3MS4yNCw0NS40NyAxNzEuMjYsNDYuMDcgMTcxLjMwLDQ2LjY3IDE3MS4zNCw0Ny4yNyAxNzEuMzksNDcuODggMTcxLjQ0LDQ4LjQ4IDE3MS41MSw0OS4wOCAxNzEuNTksNDkuNjggMTcxLjY3LDUwLjI4IDE3MS43MSw1MC44OCAxNzEuNzEsNTEuNDkgMTcxLjY4LDUyLjA5IDE3MS42Myw1Mi42OSAxNzEuNTksNTMuMjkgMTcxLjU2LDUzLjg5IDE3MS41NSw1NC40OSAxNzEuNTQsNTUuMTAgMTcxLjU0LDU1LjcwIDE3MS41Miw1Ni4zMCAxNzEuNTEsNTYuOTAgMTcxLjQ5LDU3LjUwIDE3MS40Niw1OC4xMCAxNzEuNDMsNTguNzAgMTcxLjQwLDU5LjMxIDE3MS4zNiw1OS45MSAxNzEuMzQsNjAuNTEgMTcxLjM0LDYxLjExIDE3MS4zNiw2MS43MSAxNzEuNDAsNjIuMzEgMTcxLjQzLDYyLjkyIDE3MS40NSw2My41MiAxNzEuNDksNjQuMTIgMTcxLjUyLDY0LjcyIDE3MS41NSw2NS4zMiAxNzEuNTUsNjUuOTIgMTcxLjU0LDY2LjUzIDE3MS41MSw2Ny4xMyAxNzEuNDksNjcuNzMgMTcxLjQ4LDY4LjMzIDE3MS40NCw2OC45MyAxNzEuNDAsNjkuNTMgMTcxLjM2LDcwLjE0IDE3MS4zNSw3MC43NCAxNzEuMzQsNzEuMzQgMTcxLjM0LDcxLjk0IDE3MS4zNCw3Mi41NCAxNzEuMzUsNzMuMTQgMTcxLjM3LDczLjc1IDE3MS40MCw3NC4zNSAxNzEuNDUsNzQuOTUgMTcxLjUxLDc1LjU1IDE3MS41Nyw3Ni4xNSAxNzEuNjMsNzYuNzUgMTcxLjY4LDc3LjM2IDE3MS43Myw3Ny45NiAxNzEuNzgsNzguNTYgMTcxLjgyLDc5LjE2IDE3MS44NCw3OS43NiAxNzEuODUsODAuMzYgMTcxLjg2LDgwLjk3IDE3MS44Nyw4MS41NyAxNzEuODUsODIuMTcgMTcxLjgzLDgyLjc3IDE3MS44Myw4My4zNyAxNzEuODIsODMuOTcgMTcxLjgwLDg0LjU4IDE3MS43Nyw4NS4xOCAxNzEuNzQsODUuNzggMTcxLjY4LDg2LjM4IDE3MS42Miw4Ni45OCAxNzEuNTgsODcuNTggMTcxLjUzLDg4LjE5IDE3MS40OSw4OC43OSAxNzEuNDYsODkuMzkgMTcxLjQyLDg5Ljk5IDE3MS4zOCw5MC41OSAxNzEuMzQsOTEuMTkgMTcxLjI5LDkxLjgwIDE3MS4yNCw5Mi40MCAxNzEuNDIsOTIuNDQgMTcxLjM0LDkyLjE5IDE3MC42OSw5Mi4yMyAxNzAuMDQsOTIuMzcgMTY5LjQzLDkyLjYwIDE2OC44Myw5Mi44OCAxNjguMjYsOTMuMTggMTY3LjcxLDkzLjUxIDE2Ny4xNyw5My44NSAxNjYuNjUsOTQuMjEgMTY2LjE2LDk0LjYwIDE2NS42Nyw5NS4wMCAxNjUuMTgsOTUuNDAgMTY0LjcwLDk1LjgzIDE2NC4yNCw5Ni4yOCAxNjMuNzksOTYuNzYgMTYzLjM4LDk3LjI3IDE2My4wMSw5Ny44MyAxNjIuNzEsOTguNDIgMTYyLjUxLDk5LjA2IDE2Mi40MSw5OS43MSAxNjIuMzYsMTAwLjM3IDE2Mi4zMywxMDEuMDMgMTYyLjM5LDEwMS40NiAxNjIuNTEsMTAxLjQyIDE2Mi4xMCwxMDEuNDQgMTYxLjUwLDEwMS40OCAxNjAuODksMTAxLjUwIDE2MC4yOSwxMDEuNDkgMTU5LjY5LDEwMS40OCAxNTkuMDksMTAxLjUwIDE1OC40OSwxMDEuNTMgMTU3Ljg5LDEwMS41NiAxNTcuMjgsMTAxLjU5IDE1Ni42OCwxMDEuNjMgMTU2LjA4LDEwMS42NyAxNTUuNDgsMTAxLjcwIDE1NC44OCwxMDEuNzEgMTU0LjI4LDEwMS42OCAxNTMuNjcsMTAxLjYxIDE1My4wNywxMDEuNTIgMTUyLjQ3LDEwMS40MyAxNTEuODcsMTAxLjM1IDE1MS4yNywxMDEuMzAgMTUwLjY3LDEwMS4yNiAxNTAuMDYsMTAxLjI0IDE0OS40NiwxMDEuMjUgMTQ4Ljg2LDEwMS4yNiAxNDguMjYsMTAxLjMwIDE0Ny42NiwxMDEuMzYgMTQ3LjA2LDEwMS40NiAxNDYuNDUsMTAxLjU2IDE0NS44NSwxMDEuNjYgMTQ1LjI1LDEwMS43MyAxNDQuNjUsMTAxLjc0IDE0NC4wNSwxMDEuNzIgMTQzLjQ1LDEwMS42OSAxNDIuODQsMTAxLjY3IDE0Mi4yNCwxMDEuNjggMTQxLjY0LDEwMS43MSAxNDEuMDQsMTAxLjc0IDE0MC40NCwxMDEuNzYgMTM5Ljg0LDEwMS43MyAxMzkuMjQsMTAxLjY4IDEzOC42MywxMDEuNjMgMTM4LjAzLDEwMS41OCAxMzcuNDMsMTAxLjU1IDEzNi44MywxMDEuNTIgMTM2LjIzLDEwMS40OSAxMzUuNjMsMTAxLjQ1IDEzNS4wMiwxMDEuNDAgMTM0LjQyLDEwMS4zNSAxMzMuODIsMTAxLjMyIDEzMy4yMiwxMDEuMzMgMTMyLjYyLDEwMS4zNSAxMzIuMDIsMTAxLjM3IDEzMS40MSwxMDEuMzggMTMwLjgxLDEwMS4zOCAxMzAuMjEsMTAxLjM1IDEyOS42MSwxMDEuMzIgMTI5LjAxLDEwMS4yOCAxMjguNDEsMTAxLjI3IDEyNy44MCwxMDEuMjkgMTI3LjIwLDEwMS4zNCAxMjYuNjAsMTAxLjQwIDEyNi4wMCwxMDEuNDMgMTI1LjQwLDEwMS40NyAxMjQuODAsMTAxLjUyIDEyNC4xOSwxMDEuNTUgMTIzLjU5LDEwMS41NyAxMjIuOTksMTAxLjU1IDEyMi4zOSwxMDEuNTIgMTIxLjc5LDEwMS41MSAxMjEuMTksMTAxLjUxIDEyMC41OCwxMDEuNTIgMTE5Ljk4LDEwMS41MyAxMTkuMzgsMTAxLjUzIDExOC43OCwxMDEuNTMgMTE4LjE4LDEwMS41NCAxMTcuNTgsMTAxLjU1IDExNi45NywxMDEuNTYgMTE2LjM3LDEwMS41NyAxMTUuNzcsMTAxLjU5IDExNS4xNywxMDEuNjIgMTE0LjU3LDEwMS42NSAxMTMuOTcsMTAxLjY3IDExMy4zNiwxMDEuNjUgMTEyLjc2LDEwMS42MiAxMTIuMTYsMTAxLjU5IDExMS41NiwxMDEuNTcgMTEwLjk2LDEwMS41MyAxMTAuMzYsMTAxLjQ4IDEwOS43NSwxMDEuNDIgMTA5LjE1LDEwMS4zNyAxMDguNTUsMTAxLjMzIDEwNy45NSwxMDEuMzAgMTA3LjM1LDEwMS4yOSAxMDYuNzUsMTAxLjMwIDEwNi4xNCwxMDEuMzUgMTA1LjU0LDEwMS40MiAxMDQuOTQsMTAxLjUyIDEwNC4zNCwxMDEuNjIgMTAzLjc0LDEwMS43MiAxMDMuMTQsMTAxLjgxIDEwMi41MywxMDEuODkgMTAxLjkzLDEwMS45MyAxMDEuMzMsMTAxLjkyIDEwMC43MywxMDEuODkgMTAwLjEzLDEwMS44NyA5OS41MywxMDEuODYgOTguOTIsMTAxLjg2IDk4LjMyLDEwMS44NSA5Ny43MiwxMDEuODMgOTcuMTIsMTAxLjgzIDk2LjUyLDEwMS44NSA5NS45MiwxMDEuODYgOTUuMzIsMTAxLjgzIDk0LjcxLDEwMS43NSA5NC4xMSwxMDEuNjcgOTMuNTEsMTAxLjU4IDkyLjkxLDEwMS40OSA5Mi4zMSwxMDEuNDAgOTEuNzEsMTAxLjMyIDkxLjEwLDEwMS4yNyA5MC41MCwxMDEuMjUgODkuOTAsMTAxLjI2IDg5LjMwLDEwMS4yNyA4OC43MCwxMDEuMjggODguMTAsMTAxLjI5IDg3LjQ5LDEwMS4zMiA4Ni44OSwxMDEuMzUgODYuMjksMTAxLjM4IDg1LjY5LDEwMS4zOSA4NS4wOSwxMDEuMzggODQuNDksMTAxLjM3IDgzLjg4LDEwMS4zNiA4My4yOCwxMDEuMzMgODIuNjgsMTAxLjI5IDgyLjA4LDEwMS4yNCA4MS40OCwxMDEuMTkgODAuODgsMTAxLjE4IDgwLjI3LDEwMS4yMCA3OS42NywxMDEuMjQgNzkuMDcsMTAxLjI4IDc4LjQ3LDEwMS4zMiA3Ny44NywxMDEuMzQgNzcuMjcsMTAxLjM0IDc2LjY2LDEwMS4zNSA3Ni4wNiwxMDEuMzggNzUuNDYsMTAxLjQyIDc0Ljg2LDEwMS40NyA3NC4yNiwxMDEuNTIgNzMuNjYsMTAxLjU2IDczLjA1LDEwMS42MSA3Mi40NSwxMDEuNjYgNzEuODUsMTAxLjcxIDcxLjI1LDEwMS43NSA3MC42NSwxMDEuODAgNzAuMDUsMTAxLjgzIDY5LjQ0LDEwMS44NCA2OC44NCwxMDEuODEgNjguMjQsMTAxLjc0IDY3LjY0LDEwMS42NiA2Ny4wNCwxMDEuNTggNjYuNDQsMTAxLjUyIDY1LjgzLDEwMS40OCA2NS4yMywxMDEuNDYgNjQuNjMsMTAxLjQ1IDY0LjAzLDEwMS40OCA2My40MywxMDEuNTUgNjIuODMsMTAxLjY1IDYyLjIyLDEwMS43NSA2MS42MiwxMDEuODMgNjEuMDIsMTAxLjg5IDYwLjQyLDEwMS45MyA1OS44MiwxMDEuOTYgNTkuMjIsMTAxLjk4IDU4LjYxLDEwMS45OSA1OC4wMSwxMDEuOTYgNTcuNDEsMTAxLjkwIDU2LjgxLDEwMS44MSA1Ni4yMSwxMDEuNzAgNTUuNjEsMTAxLjYwIDU1LjAxLDEwMS41MSA1NC40MCwxMDEuNDMgNTMuODAsMTAxLjM2IDUzLjIwLDEwMS4zMCA1Mi42MCwxMDEuMjUgNTIuMDAsMTAxLjIxIDUxLjQwLDEwMS4xOCA1MC43OSwxMDEuMTUgNTAuMTksMTAxLjEzIDQ5LjU5LDEwMS4xMiA0OC45OSwxMDEuMTIgNDguMzksMTAxLjE0IDQ3Ljc5LDEwMS4xOSA0Ny4xOCwxMDEuMjYgNDYuNTgsMTAxLjM3IDQ1Ljk4LDEwMS40OSA0NS4zOCwxMDEuNjAgNDQuNzgsMTAxLjcxIDQ0LjE4LDEwMS44MCA0My41NywxMDEuODcgNDIuOTcsMTAxLjkwIDQyLjM3LDEwMS44OCA0MS43NywxMDEuODMgNDEuMTcsMTAxLjc2IDQwLjU3LDEwMS42OSAzOS45NiwxMDEuNjEgMzkuMzYsMTAxLjU1IDM4Ljc2LDEwMS40OSAzOC4xNiwxMDEuNDcgMzcuNTgsMTAxLjQ0IDM3LjQzLDEwMS41NyAzNy41NiwxMDEuMzEgMzcuNDcsMTAwLjY4IDM3LjMwLDEwMC4wNiAzNy4wOCw5OS40NiAzNi44Myw5OC44OSAzNi41Nyw5OC4zMiAzNi4zMSw5Ny43NSAzNi4wMiw5Ny4xOSAzNS43MSw5Ni42NSAzNS4zNSw5Ni4xMyAzNC45Nyw5NS42MyAzNC41Niw5NS4xNSAzNC4xMSw5NC43MCAzMy42Miw5NC4yOSAzMy4xMSw5My45MCAzMi41OCw5My41NSAzMi4wMSw5My4yNCAzMS40MSw5My4wMSAzMC43OSw5Mi44MyAzMC4xNiw5Mi43MSAyOS41Myw5Mi42MyAyOC45MCw5Mi42MCAyOC40Miw5Mi42NCAyOC4zNyw5Mi41NSAyOC4zOCw5Mi4wNSAyOC40MCw5MS40NSAyOC40Miw5MC44NSAyOC40NSw5MC4yNSAyOC40OSw4OS42NSAyOC41Niw4OS4wNCAyOC42Niw4OC40NCAyOC43Miw4Ny44NCAyOC43NSw4Ny4yNCAyOC43Niw4Ni42NCAyOC43Nyw4Ni4wNCAyOC43OSw4NS40MyAyOC44Miw4NC44MyAyOC44NCw4NC4yMyAyOC44NSw4My42MyAyOC44Niw4My4wMyAyOC44Niw4Mi40MyAyOC44OCw4MS44MiAyOC44Nyw4MS4yMiAyOC44NCw4MC42MiAyOC43OCw4MC4wMiAyOC43MSw3OS40MiAyOC42Myw3OC44MiAyOC41NSw3OC4yMSAyOC40Niw3Ny42MSAyOC4zOCw3Ny4wMSAyOC4zMyw3Ni40MSAyOC4zMSw3NS44MSAyOC4zMCw3NS4yMSAyOC4zMSw3NC42MCAyOC4zNSw3NC4wMCAyOC4zOSw3My40MCAyOC40Myw3Mi44MCAyOC40NCw3Mi4yMCAyOC40Myw3MS42MCAyOC40MSw3MC45OSAyOC4zOSw3MC4zOSAyOC4zOSw2OS43OSAyOC4zOCw2OS4xOSAyOC4zNiw2OC41OSAyOC4zNCw2Ny45OSAyOC4zMiw2Ny4zOCAyOC4yOSw2Ni43OCAyOC4yNyw2Ni4xOCAyOC4yNSw2NS41OCAyOC4yNSw2NC45OCAyOC4yNSw2NC4zOCAyOC4yNCw2My43NyAyOC4yMiw2My4xNyAyOC4xNyw2Mi41NyAyOC4xMiw2MS45NyAyOC4wNyw2MS4zNyAyOC4wNiw2MC43NyAyOC4wOSw2MC4xNiAyOC4xNyw1OS41NiAyOC4yOCw1OC45NiAyOC4zOCw1OC4zNiAyOC40Niw1Ny43NiAyOC41NCw1Ny4xNiAyOC42Miw1Ni41NSAyOC42OSw1NS45NSAyOC43NSw1NS4zNSAyOC43OCw1NC43NSAyOC43OSw1NC4xNSAyOC43OCw1My41NSAyOC43Nyw1Mi45NCAyOC43Niw1Mi4zNCAyOC43NSw1MS43NCAyOC43Myw1MS4xNCAyOC43MSw1MC41NCAyOC43MSw0OS45NCAyOC43MSw0OS4zNCAyOC43Miw0OC43MyAyOC43Nyw0OC4xMyAyOC44MCw0Ny41MyAyOC44MCw0Ni45MyAyOC44MCw0Ni4zMyAyOC43OSw0NS43MyAyOC43MCw0NS4xMiAyOC42Myw0NC41MiAyOC42MCw0My45MiAyOC41Nyw0My4zMiAyOC41NCw0Mi43MiAyOC41Myw0Mi4xMiAyOC41NCw0MS41MSAyOC41Nyw0MC45MSAyOC42MCw0MC4zMSAyOC42MiwzOS43MSAyOC42NCwzOS4xMSAyOC42NywzOC41MSAyOC42OSwzNy45MCAyOC42NCwzNy41MSAyOC41MiwzNy41NiAyOC45NSwzNy40NiAyOS41NiwzNy4yNyAzMC4xNiwzNy4wNyAzMC43NSwzNi44NyAzMS4zNCwzNi42NyAzMS45MywzNi40OCAzMi41MywzNi4yNyAzMy4xMiwzNi4wMiAzMy43MCwzNS43NCAzNC4yOCwzNS40MyAzNC44NCwzNS4wNyAzNS4zOCwzNC42NyAzNS44NywzNC4yMiAzNi4zMCwzMy43MCAzNi42NCwzMy4xMiAzNi44OCwzMi40OSAzNy4wMSwzMS44MiAzNy4wNywzMS4xNSAzNy4xMSwzMC41MCAzNy4xNCwyOS44NiAzNy4xOCwyOS4yMyAzNy4yMSwyOC42MiAzNy4yMywyOC4wMSBaIE0gMzYuNTcsMjcuOTkgMzYuNjAsMjguNTggMzYuNjUsMjkuMTYgMzYuNjksMjkuNzcgMzYuNjcsMzAuMzggMzYuNTgsMzAuOTggMzYuNDEsMzEuNTcgMzYuMTgsMzIuMTQgMzUuOTEsMzIuNjkgMzUuNTksMzMuMjEgMzUuMjAsMzMuNjkgMzQuNzUsMzQuMTAgMzQuMjQsMzQuNDYgMzMuNzAsMzQuNzQgMzMuMTQsMzQuOTggMzIuNTgsMzUuMTggMzIuMDQsMzUuMzcgMzEuNTIsMzUuNTkgMzEuMDEsMzUuODMgMzAuNTAsMzYuMDYgMjkuOTYsMzYuMjUgMjkuNDEsMzYuMzggMjguODUsMzYuNDYgMjguMTMsMzYuNTUgMjcuNTksMzcuMTcgMjcuNjMsMzcuOTAgMjcuNjksMzguNTEgMjcuNzMsMzkuMTEgMjcuNzMsMzkuNzEgMjcuNzAsNDAuMzEgMjcuNjgsNDAuOTEgMjcuNjQsNDEuNTEgMjcuNTksNDIuMTIgMjcuNTIsNDIuNzIgMjcuNDYsNDMuMzIgMjcuNDAsNDMuOTIgMjcuMzcsNDQuNTIgMjcuMzAsNDUuMTIgMjcuMjEsNDUuNzMgMjcuMjAsNDYuMzMgMjcuMjAsNDYuOTMgMjcuMjAsNDcuNTMgMjcuMjIsNDguMTMgMjcuMjcsNDguNzMgMjcuMjgsNDkuMzQgMjcuMjksNDkuOTQgMjcuMzIsNTAuNTQgMjcuMzYsNTEuMTQgMjcuNDAsNTEuNzQgMjcuNDYsNTIuMzQgMjcuNTIsNTIuOTQgMjcuNTYsNTMuNTUgMjcuNTksNTQuMTUgMjcuNjIsNTQuNzUgMjcuNjEsNTUuMzUgMjcuNTgsNTUuOTUgMjcuNTEsNTYuNTUgMjcuNDEsNTcuMTYgMjcuMzEsNTcuNzYgMjcuMjMsNTguMzYgMjcuMTgsNTguOTYgMjcuMTksNTkuNTYgMjcuMjQsNjAuMTYgMjcuMjgsNjAuNzcgMjcuMzEsNjEuMzcgMjcuMzIsNjEuOTcgMjcuMzIsNjIuNTcgMjcuMzQsNjMuMTcgMjcuMzcsNjMuNzcgMjcuNDEsNjQuMzggMjcuNDQsNjQuOTggMjcuNDUsNjUuNTggMjcuNDMsNjYuMTggMjcuNDIsNjYuNzggMjcuNDEsNjcuMzggMjcuNDAsNjcuOTkgMjcuMzksNjguNTkgMjcuMzksNjkuMTkgMjcuMzksNjkuNzkgMjcuMzksNzAuMzkgMjcuMzcsNzAuOTkgMjcuMzMsNzEuNjAgMjcuMjYsNzIuMjAgMjcuMjAsNzIuODAgMjcuMTYsNzMuNDAgMjcuMTIsNzQuMDAgMjcuMDgsNzQuNjAgMjcuMDMsNzUuMjEgMjcuMDAsNzUuODEgMjYuOTgsNzYuNDEgMjcuMDAsNzcuMDEgMjcuMDQsNzcuNjEgMjcuMTEsNzguMjEgMjcuMjAsNzguODIgMjcuMjksNzkuNDIgMjcuMzcsODAuMDIgMjcuNDMsODAuNjIgMjcuNDUsODEuMjIgMjcuNDUsODEuODIgMjcuNDMsODIuNDMgMjcuMzgsODMuMDMgMjcuMzIsODMuNjMgMjcuMjYsODQuMjMgMjcuMjIsODQuODMgMjcuMTksODUuNDMgMjcuMTcsODYuMDQgMjcuMTYsODYuNjQgMjcuMTUsODcuMjQgMjcuMTIsODcuODQgMjcuMDgsODguNDQgMjcuMDcsODkuMDQgMjcuMDEsODkuNjUgMjYuOTQsOTAuMjUgMjYuODcsOTAuODUgMjYuODIsOTEuNDUgMjYuODEsOTIuMDUgMjYuODcsOTIuOTUgMjcuNzksOTQuMDIgMjguNzUsOTQuMDkgMjkuMjksOTQuMTAgMjkuODMsOTQuMTMgMzAuMzgsOTQuMjAgMzAuOTIsOTQuMzEgMzEuNDQsOTQuNDggMzEuOTUsOTQuNzAgMzIuNDUsOTQuOTUgMzIuOTQsOTUuMjMgMzMuNDEsOTUuNTQgMzMuODYsOTUuODggMzQuMzAsOTYuMjUgMzQuNzAsOTYuNjUgMzUuMDcsOTcuMDkgMzUuNDEsOTcuNTYgMzUuNzIsOTguMDUgMzUuOTksOTguNTcgMzYuMjEsOTkuMTAgMzYuMzgsOTkuNjYgMzYuNTAsMTAwLjIzIDM2LjYxLDEwMC44MCAzNi43MSwxMDEuMzcgMzYuODQsMTAyLjEwIDM3LjU1LDEwMi4xNyAzOC4xNiwxMDIuMTUgMzguNzYsMTAyLjE3IDM5LjM2LDEwMi4yMSAzOS45NiwxMDIuMjYgNDAuNTcsMTAyLjMzIDQxLjE3LDEwMi4zOSA0MS43NywxMDIuNDQgNDIuMzcsMTAyLjQ4IDQyLjk3LDEwMi41MSA0My41NywxMDIuNTMgNDQuMTgsMTAyLjUzIDQ0Ljc4LDEwMi41MSA0NS4zOCwxMDIuNDcgNDUuOTgsMTAyLjQzIDQ2LjU4LDEwMi4zOSA0Ny4xOCwxMDIuMzYgNDcuNzksMTAyLjM0IDQ4LjM5LDEwMi4zMyA0OC45OSwxMDIuMzUgNDkuNTksMTAyLjM4IDUwLjE5LDEwMi40MCA1MC43OSwxMDIuNDIgNTEuNDAsMTAyLjQ0IDUyLjAwLDEwMi40NSA1Mi42MCwxMDIuNDUgNTMuMjAsMTAyLjQyIDUzLjgwLDEwMi4zNyA1NC40MCwxMDIuMzMgNTUuMDEsMTAyLjM1IDU1LjYxLDEwMi4zOSA1Ni4yMSwxMDIuNDUgNTYuODEsMTAyLjUxIDU3LjQxLDEwMi41OCA1OC4wMSwxMDIuNjYgNTguNjEsMTAyLjcyIDU5LjIyLDEwMi43NSA1OS44MiwxMDIuNzUgNjAuNDIsMTAyLjY5IDYxLjAyLDEwMi42MCA2MS42MiwxMDIuNTEgNjIuMjIsMTAyLjQ0IDYyLjgzLDEwMi40MCA2My40MywxMDIuMzggNjQuMDMsMTAyLjM3IDY0LjYzLDEwMi4zNyA2NS4yMywxMDIuNDAgNjUuODMsMTAyLjQ0IDY2LjQ0LDEwMi40OSA2Ny4wNCwxMDIuNTQgNjcuNjQsMTAyLjU3IDY4LjI0LDEwMi41OSA2OC44NCwxMDIuNjAgNjkuNDQsMTAyLjYyIDcwLjA1LDEwMi42NCA3MC42NSwxMDIuNjMgNzEuMjUsMTAyLjYxIDcxLjg1LDEwMi41NiA3Mi40NSwxMDIuNTEgNzMuMDUsMTAyLjQ2IDczLjY2LDEwMi40MSA3NC4yNiwxMDIuMzggNzQuODYsMTAyLjM5IDc1LjQ2LDEwMi40MyA3Ni4wNiwxMDIuNDUgNzYuNjYsMTAyLjQzIDc3LjI3LDEwMi4zOSA3Ny44NywxMDIuMzUgNzguNDcsMTAyLjMxIDc5LjA3LDEwMi4zMCA3OS42NywxMDIuMzEgODAuMjcsMTAyLjMzIDgwLjg4LDEwMi4zNSA4MS40OCwxMDIuMzUgODIuMDgsMTAyLjM0IDgyLjY4LDEwMi4zMiA4My4yOCwxMDIuMzIgODMuODgsMTAyLjM0IDg0LjQ5LDEwMi4zNiA4NS4wOSwxMDIuMzcgODUuNjksMTAyLjM3IDg2LjI5LDEwMi4zOCA4Ni44OSwxMDIuMzkgODcuNDksMTAyLjQwIDg4LjEwLDEwMi40MCA4OC43MCwxMDIuMzggODkuMzAsMTAyLjM3IDg5LjkwLDEwMi4zNSA5MC41MCwxMDIuMzQgOTEuMTAsMTAyLjMyIDkxLjcxLDEwMi4zMCA5Mi4zMSwxMDIuMzEgOTIuOTEsMTAyLjM2IDkzLjUxLDEwMi40MyA5NC4xMSwxMDIuNTEgOTQuNzEsMTAyLjU5IDk1LjMyLDEwMi42NSA5NS45MiwxMDIuNzAgOTYuNTIsMTAyLjc1IDk3LjEyLDEwMi43OCA5Ny43MiwxMDIuODEgOTguMzIsMTAyLjg0IDk4LjkyLDEwMi44OSA5OS41MywxMDIuOTUgMTAwLjEzLDEwMi45OSAxMDAuNzMsMTAzLjAxIDEwMS4zMywxMDMuMDIgMTAxLjkzLDEwMy4wMSAxMDIuNTMsMTAzLjAwIDEwMy4xNCwxMDIuOTcgMTAzLjc0LDEwMi45MyAxMDQuMzQsMTAyLjg3IDEwNC45NCwxMDIuODAgMTA1LjU0LDEwMi43NSAxMDYuMTQsMTAyLjcwIDEwNi43NSwxMDIuNjggMTA3LjM1LDEwMi42OCAxMDcuOTUsMTAyLjcxIDEwOC41NSwxMDIuNzUgMTA5LjE1LDEwMi44MSAxMDkuNzUsMTAyLjg2IDExMC4zNiwxMDIuOTEgMTEwLjk2LDEwMi45NiAxMTEuNTYsMTAyLjk5IDExMi4xNiwxMDMuMDEgMTEyLjc2LDEwMi45OCAxMTMuMzYsMTAyLjkzIDExMy45NywxMDIuODggMTE0LjU3LDEwMi44NSAxMTUuMTcsMTAyLjgzIDExNS43NywxMDIuODEgMTE2LjM3LDEwMi43OCAxMTYuOTcsMTAyLjc1IDExNy41OCwxMDIuNzUgMTE4LjE4LDEwMi43NSAxMTguNzgsMTAyLjc0IDExOS4zOCwxMDIuNzAgMTE5Ljk4LDEwMi42NSAxMjAuNTgsMTAyLjYwIDEyMS4xOSwxMDIuNTYgMTIxLjc5LDEwMi41MiAxMjIuMzksMTAyLjQ3IDEyMi45OSwxMDIuNDMgMTIzLjU5LDEwMi40MCAxMjQuMTksMTAyLjM4IDEyNC44MCwxMDIuMzcgMTI1LjQwLDEwMi4zNSAxMjYuMDAsMTAyLjMzIDEyNi42MCwxMDIuMzAgMTI3LjIwLDEwMi4zMCAxMjcuODAsMTAyLjMxIDEyOC40MSwxMDIuMzMgMTI5LjAxLDEwMi4zMiAxMjkuNjEsMTAyLjMwIDEzMC4yMSwxMDIuMjcgMTMwLjgxLDEwMi4yNyAxMzEuNDEsMTAyLjI5IDEzMi4wMiwxMDIuMzIgMTMyLjYyLDEwMi4zNiAxMzMuMjIsMTAyLjM5IDEzMy44MiwxMDIuNDAgMTM0LjQyLDEwMi40MSAxMzUuMDIsMTAyLjQ0IDEzNS42MywxMDIuNDkgMTM2LjIzLDEwMi41OCAxMzYuODMsMTAyLjY3IDEzNy40MywxMDIuNzYgMTM4LjAzLDEwMi44MiAxMzguNjMsMTAyLjg0IDEzOS4yNCwxMDIuODAgMTM5Ljg0LDEwMi43NCAxNDAuNDQsMTAyLjcxIDE0MS4wNCwxMDIuNzIgMTQxLjY0LDEwMi43NSAxNDIuMjQsMTAyLjc3IDE0Mi44NCwxMDIuNzcgMTQzLjQ1LDEwMi43NCAxNDQuMDUsMTAyLjcxIDE0NC42NSwxMDIuNjggMTQ1LjI1LDEwMi42NCAxNDUuODUsMTAyLjU5IDE0Ni40NSwxMDIuNTQgMTQ3LjA2LDEwMi40OSAxNDcuNjYsMTAyLjQzIDE0OC4yNiwxMDIuMzUgMTQ4Ljg2LDEwMi4yNyAxNDkuNDYsMTAyLjIzIDE1MC4wNiwxMDIuMjUgMTUwLjY3LDEwMi4zMSAxNTEuMjcsMTAyLjQxIDE1MS44NywxMDIuNTMgMTUyLjQ3LDEwMi42NCAxNTMuMDcsMTAyLjczIDE1My42NywxMDIuODAgMTU0LjI4LDEwMi44NCAxNTQuODgsMTAyLjg3IDE1NS40OCwxMDIuODcgMTU2LjA4LDEwMi44NyAxNTYuNjgsMTAyLjg1IDE1Ny4yOCwxMDIuODEgMTU3Ljg5LDEwMi43NyAxNTguNDksMTAyLjcyIDE1OS4wOSwxMDIuNjggMTU5LjY5LDEwMi42NiAxNjAuMjksMTAyLjYzIDE2MC44OSwxMDIuNjAgMTYxLjUwLDEwMi41NCAxNjIuMTAsMTAyLjQ5IDE2Mi44MywxMDIuMzkgMTYzLjMyLDEwMS44MiAxNjMuMzIsMTAxLjEzIDE2My4zNSwxMDAuNTQgMTYzLjQ4LDk5Ljk3IDE2My42OCw5OS40MiAxNjMuOTQsOTguODkgMTY0LjIzLDk4LjM5IDE2NC41Niw5Ny45MiAxNjQuOTIsOTcuNDggMTY1LjMyLDk3LjA4IDE2NS43NCw5Ni43MCAxNjYuMTYsOTYuMzUgMTY2LjU4LDk2LjAxIDE2Ny4wMCw5NS42NyAxNjcuNDEsOTUuMzEgMTY3LjgxLDk0LjkzIDE2OC4yMyw5NC41NCAxNjguNjgsOTQuMTcgMTY5LjE3LDkzLjg0IDE2OS42OSw5My41NyAxNzAuMjQsOTMuMzYgMTcwLjgyLDkzLjIwIDE3MS40MSw5My4xMCAxNzIuMDYsOTMuMDUgMTcyLjA5LDkyLjQwIDE3Mi4xMiw5MS44MCAxNzIuMTUsOTEuMTkgMTcyLjIwLDkwLjU5IDE3Mi4yMyw4OS45OSAxNzIuMjYsODkuMzkgMTcyLjI1LDg4Ljc5IDE3Mi4yMiw4OC4xOSAxNzIuMjAsODcuNTggMTcyLjE5LDg2Ljk4IDE3Mi4yMCw4Ni4zOCAxNzIuMTksODUuNzggMTcyLjIyLDg1LjE4IDE3Mi4yNSw4NC41OCAxNzIuMjcsODMuOTcgMTcyLjI4LDgzLjM3IDE3Mi4yOCw4Mi43NyAxNzIuMzAsODIuMTcgMTcyLjMyLDgxLjU3IDE3Mi40MCw4MC45NyAxNzIuNDksODAuMzYgMTcyLjU3LDc5Ljc2IDE3Mi42NSw3OS4xNiAxNzIuNzMsNzguNTYgMTcyLjc5LDc3Ljk2IDE3Mi44Myw3Ny4zNiAxNzIuODIsNzYuNzUgMTcyLjc5LDc2LjE1IDE3Mi43NCw3NS41NSAxNzIuNjksNzQuOTUgMTcyLjYyLDc0LjM1IDE3Mi41Niw3My43NSAxNzIuNTEsNzMuMTQgMTcyLjUwLDcyLjU0IDE3Mi41MCw3MS45NCAxNzIuNTEsNzEuMzQgMTcyLjUzLDcwLjc0IDE3Mi41Myw3MC4xNCAxNzIuNTIsNjkuNTMgMTcyLjUwLDY4LjkzIDE3Mi40OCw2OC4zMyAxNzIuNDgsNjcuNzMgMTcyLjQ2LDY3LjEzIDE3Mi40NCw2Ni41MyAxNzIuNDMsNjUuOTIgMTcyLjQ0LDY1LjMyIDE3Mi40Nyw2NC43MiAxNzIuNTEsNjQuMTIgMTcyLjU1LDYzLjUyIDE3Mi41Nyw2Mi45MiAxNzIuNjEsNjIuMzEgMTcyLjY1LDYxLjcxIDE3Mi42OSw2MS4xMSAxNzIuNzMsNjAuNTEgMTcyLjc2LDU5LjkxIDE3Mi43OCw1OS4zMSAxNzIuODEsNTguNzAgMTcyLjgzLDU4LjEwIDE3Mi44NSw1Ny41MCAxNzIuODUsNTYuOTAgMTcyLjg1LDU2LjMwIDE3Mi44NCw1NS43MCAxNzIuODUsNTUuMTAgMTcyLjg2LDU0LjQ5IDE3Mi44Nyw1My44OSAxNzIuODcsNTMuMjkgMTcyLjg0LDUyLjY5IDE3Mi44MCw1Mi4wOSAxNzIuNzgsNTEuNDkgMTcyLjc3LDUwLjg4IDE3Mi43Niw1MC4yOCAxNzIuNzMsNDkuNjggMTcyLjY5LDQ5LjA4IDE3Mi42Miw0OC40OCAxNzIuNTQsNDcuODggMTcyLjQ2LDQ3LjI3IDE3Mi40Miw0Ni42NyAxNzIuNDEsNDYuMDcgMTcyLjQ0LDQ1LjQ3IDE3Mi40Niw0NC44NyAxNzIuNDgsNDQuMjcgMTcyLjUyLDQzLjY2IDE3Mi42MCw0My4wNiAxNzIuNjUsNDIuNDYgMTcyLjY1LDQxLjg2IDE3Mi42NSw0MS4yNiAxNzIuNjMsNDAuNjYgMTcyLjU3LDQwLjA1IDE3Mi41MywzOS40NSAxNzIuNTMsMzguODUgMTcyLjU0LDM4LjI1IDE3Mi41NCwzNy42NSAxNzIuNDIsMzYuNjkgMTcxLjUwLDM2LjQ0IDE3MC45MiwzNi4zOSAxNzAuMzYsMzYuMzAgMTY5LjgwLDM2LjE4IDE2OS4yNiwzNi4wMyAxNjguNzIsMzUuODYgMTY4LjE5LDM1LjY0IDE2Ny42OSwzNS4zNSAxNjcuMjMsMzUuMDIgMTY2LjgwLDM0LjY1IDE2Ni40MCwzNC4yNiAxNjYuMDMsMzMuODQgMTY1LjcwLDMzLjM4IDE2NS40NCwzMi44OCAxNjUuMTksMzIuNDAgMTY0Ljk3LDMxLjkwIDE2NC43OSwzMS4zOSAxNjQuNjQsMzAuODggMTY0LjUxLDMwLjM2IDE2NC40MCwyOS44NSAxNjQuMjksMjkuMzQgMTY0LjE4LDI4LjgzIDE2NC4wNCwyOC4wMSAxNjMuMTIsMjcuMDUgMTYyLjE0LDI3LjAyIDE2MS41NCwyNy4wNyAxNjAuOTQsMjcuMTEgMTYwLjM0LDI3LjE1IDE1OS43NCwyNy4yMiAxNTkuMTMsMjcuMjkgMTU4LjUzLDI3LjM1IDE1Ny45MywyNy4zOCAxNTcuMzMsMjcuMzcgMTU2LjczLDI3LjM1IDE1Ni4xMywyNy4zNCAxNTUuNTIsMjcuMzYgMTU0LjkyLDI3LjM5IDE1NC4zMiwyNy40MSAxNTMuNzIsMjcuNDEgMTUzLjEyLDI3LjM5IDE1Mi41MiwyNy4zOCAxNTEuOTEsMjcuMzYgMTUxLjMxLDI3LjMzIDE1MC43MSwyNy4zMCAxNTAuMTEsMjcuMjUgMTQ5LjUxLDI3LjIxIDE0OC45MSwyNy4yMCAxNDguMzAsMjcuMjIgMTQ3LjcwLDI3LjI4IDE0Ny4xMCwyNy4zNSAxNDYuNTAsMjcuNDMgMTQ1LjkwLDI3LjUxIDE0NS4zMCwyNy41OSAxNDQuNjksMjcuNjcgMTQ0LjA5LDI3LjcyIDE0My40OSwyNy43NSAxNDIuODksMjcuNzYgMTQyLjI5LDI3Ljc3IDE0MS42OSwyNy43OCAxNDEuMDgsMjcuNzkgMTQwLjQ4LDI3LjgwIDEzOS44OCwyNy44MSAxMzkuMjgsMjcuODAgMTM4LjY4LDI3Ljc4IDEzOC4wOCwyNy43NCAxMzcuNDcsMjcuNzAgMTM2Ljg3LDI3LjY2IDEzNi4yNywyNy42NCAxMzUuNjcsMjcuNjQgMTM1LjA3LDI3LjY0IDEzNC40NywyNy42NCAxMzMuODYsMjcuNjEgMTMzLjI2LDI3LjU4IDEzMi42NiwyNy41NSAxMzIuMDYsMjcuNTMgMTMxLjQ2LDI3LjU0IDEzMC44NiwyNy41NSAxMzAuMjUsMjcuNTcgMTI5LjY1LDI3LjU3IDEyOS4wNSwyNy41NyAxMjguNDUsMjcuNTggMTI3Ljg1LDI3LjU5IDEyNy4yNSwyNy42MCAxMjYuNjQsMjcuNTkgMTI2LjA0LDI3LjU2IDEyNS40NCwyNy41MiAxMjQuODQsMjcuNDggMTI0LjI0LDI3LjQ0IDEyMy42NCwyNy40MCAxMjMuMDMsMjcuMzYgMTIyLjQzLDI3LjMzIDEyMS44MywyNy4zMSAxMjEuMjMsMjcuMjkgMTIwLjYzLDI3LjI3IDEyMC4wMywyNy4yNyAxMTkuNDMsMjcuMjYgMTE4LjgyLDI3LjI0IDExOC4yMiwyNy4yMiAxMTcuNjIsMjcuMjMgMTE3LjAyLDI3LjMwIDExNi40MiwyNy40MCAxMTUuODIsMjcuNDggMTE1LjIxLDI3LjUxIDExNC42MSwyNy40NyAxMTQuMDEsMjcuNDIgMTEzLjQxLDI3LjM4IDExMi44MSwyNy4zOCAxMTIuMjEsMjcuMzggMTExLjYwLDI3LjM5IDExMS4wMCwyNy40MCAxMTAuNDAsMjcuNDMgMTA5LjgwLDI3LjQ4IDEwOS4yMCwyNy41MiAxMDguNjAsMjcuNTYgMTA3Ljk5LDI3LjYwIDEwNy4zOSwyNy42NCAxMDYuNzksMjcuNjggMTA2LjE5LDI3LjY5IDEwNS41OSwyNy42NyAxMDQuOTksMjcuNjIgMTA0LjM4LDI3LjU1IDEwMy43OCwyNy41MCAxMDMuMTgsMjcuNDYgMTAyLjU4LDI3LjQzIDEwMS45OCwyNy40MSAxMDEuMzgsMjcuNDAgMTAwLjc3LDI3LjQwIDEwMC4xNywyNy40MSA5OS41NywyNy40MyA5OC45NywyNy40NSA5OC4zNywyNy40NiA5Ny43NywyNy40NSA5Ny4xNiwyNy40MyA5Ni41NiwyNy40MyA5NS45NiwyNy40NSA5NS4zNiwyNy41MCA5NC43NiwyNy41NCA5NC4xNiwyNy41NCA5My41NSwyNy40OSA5Mi45NSwyNy40MSA5Mi4zNSwyNy4zMyA5MS43NSwyNy4yNyA5MS4xNSwyNy4yNCA5MC41NSwyNy4yMiA4OS45NCwyNy4yMiA4OS4zNCwyNy4yMiA4OC43NCwyNy4yMiA4OC4xNCwyNy4yMiA4Ny41NCwyNy4yMiA4Ni45NCwyNy4yMiA4Ni4zMywyNy4xOSA4NS43MywyNy4xNSA4NS4xMywyNy4xMSA4NC41MywyNy4xMCA4My45MywyNy4xMiA4My4zMywyNy4xNiA4Mi43MiwyNy4yMSA4Mi4xMiwyNy4yNSA4MS41MiwyNy4yOSA4MC45MiwyNy4zMiA4MC4zMiwyNy4zNSA3OS43MiwyNy4zNiA3OS4xMiwyNy4zNSA3OC41MSwyNy4zMyA3Ny45MSwyNy4zMSA3Ny4zMSwyNy4yOCA3Ni43MSwyNy4yNyA3Ni4xMSwyNy4yNyA3NS41MSwyNy4yOCA3NC45MCwyNy4yOSA3NC4zMCwyNy4zMiA3My43MCwyNy4zOCA3My4xMCwyNy40NiA3Mi41MCwyNy41MiA3MS45MCwyNy41OCA3MS4yOSwyNy42MiA3MC42OSwyNy42NiA3MC4wOSwyNy43MCA2OS40OSwyNy43MSA2OC44OSwyNy43MCA2OC4yOSwyNy42NyA2Ny42OCwyNy42NiA2Ny4wOCwyNy42OSA2Ni40OCwyNy43MyA2NS44OCwyNy43NiA2NS4yOCwyNy43NiA2NC42OCwyNy43MyA2NC4wNywyNy42OSA2My40NywyNy42NiA2Mi44NywyNy42NiA2Mi4yNywyNy42NyA2MS42NywyNy42OSA2MS4wNywyNy43MCA2MC40NiwyNy43MSA1OS44NiwyNy43MCA1OS4yNiwyNy42OCA1OC42NiwyNy42NiA1OC4wNiwyNy42NCA1Ny40NiwyNy42MiA1Ni44NSwyNy42MSA1Ni4yNSwyNy42MSA1NS42NSwyNy42MyA1NS4wNSwyNy42NCA1NC40NSwyNy42NiA1My44NSwyNy42OCA1My4yNCwyNy42OSA1Mi42NCwyNy43MiA1Mi4wNCwyNy43MyA1MS40NCwyNy43MCA1MC44NCwyNy42MyA1MC4yNCwyNy41MyA0OS42MywyNy40MiA0OS4wMywyNy4zMyA0OC40MywyNy4yOSA0Ny44MywyNy4yNyA0Ny4yMywyNy4yOCA0Ni42MywyNy4zMCA0Ni4wMiwyNy4zMyA0NS40MiwyNy4zNyA0NC44MiwyNy40MSA0NC4yMiwyNy40NiA0My42MiwyNy41MSA0My4wMiwyNy41NiA0Mi40MSwyNy42MSA0MS44MSwyNy42NCA0MS4yMSwyNy42NCA0MC42MSwyNy42MSA0MC4wMSwyNy41NiAzOS40MSwyNy41NSAzOC44MCwyNy41OSAzOC4yMCwyNy42NiAzNy42MCwyNy43NCAzNy4wMCwyNy43NyBaIi8+PHBhdGggZmlsbD0idXJsKCNjbGcpIiBkPSJNIDI2LDIzIGwgMywzIGwgLTMsMyBsIC0zLC0zIHoiLz48cGF0aCBmaWxsPSJ1cmwoI2NsZykiIGQ9Ik0gMTc0LDIzIGwgMywzIGwgLTMsMyBsIC0zLC0zIHoiLz48cGF0aCBmaWxsPSJ1cmwoI2NsZykiIGQ9Ik0gMjYsMTAxIGwgMywzIGwgLTMsMyBsIC0zLC0zIHoiLz48cGF0aCBmaWxsPSJ1cmwoI2NsZykiIGQ9Ik0gMTc0LDEwMSBsIDMsMyBsIC0zLDMgbCAtMywtMyB6Ii8+PC9zdmc+\");\n  --offstage-i-input-orn-bot: url(\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNDAiIGhlaWdodD0iMzAiIHZpZXdCb3g9IjAgMCAxNDAgMzAiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iY2xnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOWE2YTM2Ii8+PHN0b3Agb2Zmc2V0PSIuMjIiIHN0b3AtY29sb3I9IiNlMmI4NzQiLz48c3RvcCBvZmZzZXQ9Ii40NSIgc3RvcC1jb2xvcj0iI2I5ODY0YSIvPjxzdG9wIG9mZnNldD0iLjciIHN0b3AtY29sb3I9IiNmMGNmOGUiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNhNTczM2QiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cGF0aCBmaWxsPSJ1cmwoI2NsZykiIGQ9Ik0gMTQuODcsMTAuMzggMTUuNjcsMTAuNjUgMTYuNDYsMTAuOTMgMTcuMjIsMTEuMjcgMTcuOTgsMTEuNjAgMTguNzUsMTEuODkgMTkuNTQsMTIuMDkgMjAuMzEsMTIuMzAgMjEuMDgsMTIuNTIgMjEuODQsMTIuNzQgMjIuNTksMTIuOTQgMjMuMzQsMTMuMTMgMjQuMTAsMTMuMjggMjQuODUsMTMuNDEgMjUuNjAsMTMuNTMgMjYuMzQsMTMuNjQgMjcuMDgsMTMuNzEgMjcuODAsMTMuODMgMjguNTEsMTMuOTggMjkuMjEsMTQuMTIgMjkuOTEsMTQuMjUgMzAuNjEsMTQuMzggMzEuMjksMTQuNTAgMzEuOTcsMTQuNjIgMzIuNjQsMTQuNzggMzMuMjksMTUuMDEgMzMuOTMsMTUuMjggMzQuNTcsMTUuNTUgMzUuMjEsMTUuODAgMzUuODUsMTYuMDIgMzYuNDksMTYuMTcgMzcuMTQsMTYuMjYgMzcuNzgsMTYuMzEgMzguNDIsMTYuMzMgMzkuMDUsMTYuMzIgMzkuNjgsMTYuMjkgNDAuMzAsMTYuMjkgNDAuOTIsMTYuMzAgNDEuNTMsMTYuMzEgNDIuMTMsMTYuMjkgNDIuNzMsMTYuMjIgNDMuMzIsMTYuMTMgNDMuOTAsMTYuMDQgNDQuNDgsMTUuOTYgNDUuMDUsMTUuOTEgNDUuNjIsMTUuOTAgNDYuMTgsMTUuOTAgNDYuNzQsMTUuODcgNDcuMjksMTUuODIgNDcuODQsMTUuNzYgNDguMzgsMTUuNzEgNDguOTIsMTUuNjYgNDkuNDUsMTUuNTkgNDkuOTcsMTUuNDkgNTAuNDksMTUuMzcgNTAuOTksMTUuMjMgNTEuNDksMTUuMDcgNTEuOTcsMTQuOTAgNTIuNDYsMTQuNzMgNTIuOTQsMTQuNTkgNTMuNDIsMTQuNDkgNTMuOTEsMTQuNDAgNTQuNDEsMTQuMzYgNTQuOTEsMTQuMzUgNTUuNDIsMTQuMzMgNTUuOTAsMTQuMjYgNTYuMzcsMTQuMTQgNTYuODMsMTMuOTkgNTcuMjcsMTMuODIgNTcuNzIsMTMuNjUgNTguMTUsMTMuNDYgNTguNTIsMTMuMTQgNTguODYsMTIuNzcgNTkuMTgsMTIuMzggNTkuNTUsMTIuMDkgNTkuOTMsMTEuODcgNTkuNzcsMTEuNTMgNTkuMzgsMTEuNzQgNTguOTgsMTEuOTQgNTguNTUsMTIuMDcgNTguMTMsMTIuMjMgNTcuNzMsMTIuNDMgNTcuMzUsMTIuNzIgNTYuOTUsMTIuOTYgNTYuNTIsMTMuMTAgNTYuMDUsMTMuMTcgNTUuNTYsMTMuMjAgNTUuMDgsMTMuMjQgNTQuNjEsMTMuMzAgNTQuMTQsMTMuMzggNTMuNjcsMTMuNDYgNTMuMjAsMTMuNTcgNTIuNzQsMTMuNzMgNTIuMjgsMTMuOTIgNTEuODIsMTQuMTEgNTEuMzQsMTQuMzAgNTAuODYsMTQuNDkgNTAuMzcsMTQuNjUgNDkuODcsMTQuNzcgNDkuMzUsMTQuODIgNDguODIsMTQuODQgNDguMjksMTQuODUgNDcuNzUsMTQuODIgNDcuMjEsMTQuNzcgNDYuNjYsMTQuNzIgNDYuMTEsMTQuNzEgNDUuNTYsMTQuNzUgNDUuMDEsMTQuODIgNDQuNDUsMTQuOTEgNDMuODksMTQuOTggNDMuMzIsMTUuMDYgNDIuNzQsMTUuMTEgNDIuMTUsMTUuMTUgNDEuNTYsMTUuMTcgNDAuOTYsMTUuMTYgNDAuMzYsMTUuMTMgMzkuNzUsMTUuMTAgMzkuMTQsMTUuMDQgMzguNTMsMTQuOTcgMzcuOTAsMTQuOTMgMzcuMjcsMTQuODkgMzYuNjMsMTQuODYgMzUuOTksMTQuODEgMzUuMzQsMTQuNzQgMzQuNzAsMTQuNjQgMzQuMDQsMTQuNTIgMzMuMzksMTQuMzkgMzIuNzMsMTQuMjUgMzIuMDYsMTQuMDkgMzEuMzksMTMuOTcgMzAuNzEsMTMuODUgMzAuMDIsMTMuNzIgMjkuMzIsMTMuNTkgMjguNjIsMTMuNDUgMjcuOTIsMTMuMzAgMjcuMjIsMTMuMTEgMjYuNTMsMTIuODUgMjUuODIsMTIuNjIgMjUuMTEsMTIuNDAgMjQuMzgsMTIuMTkgMjMuNjUsMTIuMDAgMjIuOTAsMTEuODIgMjIuMTUsMTEuNjQgMjEuMzksMTEuNDQgMjAuNjQsMTEuMjIgMTkuODcsMTEuMDEgMTkuMDksMTAuNzkgMTguMjgsMTAuNjggMTcuNDUsMTAuNTkgMTYuNjEsMTAuNDggMTUuODAsMTAuMjggMTQuOTksMTAuMDIgWiIvPjxwYXRoIGZpbGw9InVybCgjY2xnKSIgZD0iTSAxMjQuOTYsOS44NyAxMjQuMTYsMTAuMTcgMTIzLjM3LDEwLjQzIDEyMi41NiwxMC42MSAxMjEuNzUsMTAuNzcgMTIwLjk1LDEwLjk0IDEyMC4xOSwxMS4yMSAxMTkuNDQsMTEuNDYgMTE4LjY3LDExLjY3IDExNy45MCwxMS44MiAxMTcuMTMsMTEuOTMgMTE2LjM2LDEyLjA0IDExNS42MSwxMi4xNyAxMTQuODgsMTIuMzMgMTE0LjE1LDEyLjQ4IDExMy40MiwxMi42MiAxMTIuNzAsMTIuNzUgMTExLjk5LDEyLjkwIDExMS4zMCwxMy4wOSAxMTAuNjMsMTMuMzQgMTA5Ljk2LDEzLjU4IDEwOS4yOSwxMy44MCAxMDguNjEsMTMuOTcgMTA3Ljk0LDE0LjEyIDEwNy4yNywxNC4yMyAxMDYuNjAsMTQuMjkgMTA1LjkzLDE0LjMxIDEwNS4yNiwxNC4zMCAxMDQuNjAsMTQuMzAgMTAzLjk1LDE0LjMzIDEwMy4zMiwxNC40MCAxMDIuNjksMTQuNTEgMTAyLjA3LDE0LjYzIDEwMS40NiwxNC43NCAxMDAuODQsMTQuODMgMTAwLjI0LDE0LjkxIDk5LjYzLDE1LjAwIDk5LjAzLDE1LjA4IDk4LjQ0LDE1LjEzIDk3Ljg1LDE1LjExIDk3LjI2LDE1LjAxIDk2LjY5LDE0Ljg2IDk2LjEyLDE0LjcwIDk1LjU2LDE0LjU2IDk1LjAwLDE0LjUwIDk0LjQ1LDE0LjUxIDkzLjkwLDE0LjU0IDkzLjM1LDE0LjU0IDkyLjgxLDE0LjUzIDkyLjI4LDE0LjUxIDkxLjc1LDE0LjUwIDkxLjIyLDE0LjQ5IDkwLjcxLDE0LjQyIDkwLjIwLDE0LjMzIDg5LjY5LDE0LjI1IDg5LjE5LDE0LjE4IDg4LjY5LDE0LjEyIDg4LjE5LDE0LjA2IDg3LjcwLDEzLjk5IDg3LjIxLDEzLjkzIDg2LjczLDEzLjg2IDg2LjI1LDEzLjc4IDg1Ljc3LDEzLjcxIDg1LjI5LDEzLjY0IDg0LjgyLDEzLjU3IDg0LjM0LDEzLjQ5IDgzLjg4LDEzLjM5IDgzLjQzLDEzLjI2IDgzLjAwLDEzLjA5IDgyLjU5LDEyLjg2IDgyLjIxLDEyLjU5IDgxLjgwLDEyLjM4IDgxLjQxLDEyLjE2IDgxLjAxLDExLjk2IDgwLjY0LDExLjcxIDgwLjI2LDExLjQ4IDgwLjA3LDExLjg1IDgwLjQ2LDEyLjA4IDgwLjgxLDEyLjM4IDgxLjEzLDEyLjc4IDgxLjQ2LDEzLjIwIDgxLjgwLDEzLjYwIDgyLjE5LDEzLjg4IDgyLjYyLDE0LjExIDgzLjA3LDE0LjI3IDgzLjU1LDE0LjM4IDg0LjAzLDE0LjQ3IDg0LjUyLDE0LjU1IDg1LjAxLDE0LjYyIDg1LjUwLDE0LjY4IDg1Ljk5LDE0Ljc3IDg2LjQ3LDE0LjkwIDg2Ljk2LDE1LjA1IDg3LjQ0LDE1LjE5IDg3Ljk0LDE1LjMyIDg4LjQ1LDE1LjQzIDg4Ljk2LDE1LjUzIDg5LjQ3LDE1LjYyIDkwLjAwLDE1LjY5IDkwLjUzLDE1LjcyIDkxLjA3LDE1LjcxIDkxLjYyLDE1LjY3IDkyLjE3LDE1LjYxIDkyLjczLDE1LjUxIDkzLjI5LDE1LjQyIDkzLjg1LDE1LjM4IDk0LjQwLDE1LjQzIDk0Ljk2LDE1LjU0IDk1LjUzLDE1LjY4IDk2LjEwLDE1Ljc5IDk2LjY4LDE1LjkwIDk3LjI3LDE1Ljk5IDk3Ljg3LDE2LjA3IDk4LjQ3LDE2LjE0IDk5LjA4LDE2LjE1IDk5LjY5LDE2LjExIDEwMC4zMCwxNi4wMSAxMDAuOTEsMTUuODYgMTAxLjUzLDE1LjcwIDEwMi4xNSwxNS41NiAxMDIuNzksMTUuNDYgMTAzLjQzLDE1LjQwIDEwNC4wNywxNS4zNyAxMDQuNzMsMTUuMzUgMTA1LjQwLDE1LjMzIDEwNi4wNywxNS4zMCAxMDYuNzUsMTUuMjggMTA3LjQ0LDE1LjI3IDEwOC4xMywxNS4yMyAxMDguODIsMTUuMTQgMTA5LjUxLDE0Ljk5IDExMC4yMCwxNC44MyAxMTAuOTAsMTQuNjUgMTExLjU5LDE0LjQ1IDExMi4yOCwxNC4yMSAxMTIuOTgsMTMuOTUgMTEzLjY4LDEzLjcwIDExNC40MSwxMy41NCAxMTUuMTYsMTMuNDUgMTE1LjkzLDEzLjQwIDExNi43MSwxMy4zMyAxMTcuNDgsMTMuMjEgMTE4LjI1LDEzLjA0IDExOS4wMSwxMi44NCAxMTkuNzgsMTIuNjEgMTIwLjU1LDEyLjM3IDEyMS4zMiwxMi4xMiAxMjIuMDYsMTEuNzUgMTIyLjgxLDExLjM2IDEyMy41NiwxMC45NyAxMjQuMzQsMTAuNjcgMTI1LjE0LDEwLjQwIFoiLz48cGF0aCBmaWxsPSJ1cmwoI2NsZykiIGQ9Ik0gNzAsNyBsIDMuNSw1IGwgLTMuNSw1IGwgLTMuNSwtNSB6Ii8+PGNpcmNsZSBmaWxsPSJ1cmwoI2NsZykiIGN4PSI2IiBjeT0iMTAiIHI9IjEuNCIvPjxjaXJjbGUgZmlsbD0idXJsKCNjbGcpIiBjeD0iMTM0IiBjeT0iMTAiIHI9IjEuNCIvPjwvc3ZnPg==\");\n  --offstage-i-input-orn-top: url(\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCAyMDAgNDAiPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iY2xnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOWE2YTM2Ii8+PHN0b3Agb2Zmc2V0PSIuMjIiIHN0b3AtY29sb3I9IiNlMmI4NzQiLz48c3RvcCBvZmZzZXQ9Ii40NSIgc3RvcC1jb2xvcj0iI2I5ODY0YSIvPjxzdG9wIG9mZnNldD0iLjciIHN0b3AtY29sb3I9IiNmMGNmOGUiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNhNTczM2QiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cGF0aCBmaWxsPSJ1cmwoI2NsZykiIGQ9Ik0gMzAuMTksMzAuNTMgMzAuOTQsMzAuMjMgMzEuNjgsMjkuOTAgMzIuNDIsMjkuNjEgMzMuMTYsMjkuMzAgMzMuOTAsMjkuMDIgMzQuNjIsMjguNzEgMzUuMzUsMjguNDMgMzYuMDgsMjguMTUgMzYuODEsMjcuOTIgMzcuNTYsMjcuNzQgMzguMzIsMjcuNjIgMzkuMDksMjcuNTUgMzkuODUsMjcuNDkgNDAuNjEsMjcuNDIgNDEuMzQsMjcuMzIgNDIuMDcsMjcuMTkgNDIuNzksMjcuMDYgNDMuNTEsMjYuOTYgNDQuMjQsMjYuOTAgNDQuOTcsMjYuODggNDUuNzAsMjYuODYgNDYuNDAsMjYuODAgNDcuMDksMjYuNjYgNDcuNzUsMjYuNDIgNDguMzksMjYuMTMgNDkuMDMsMjUuODIgNDkuNjcsMjUuNTQgNTAuMzIsMjUuMzAgNTAuOTgsMjUuMTEgNTEuNjMsMjQuOTcgNTIuMjksMjQuODMgNTIuOTMsMjQuNjUgNTMuNTcsMjQuNDYgNTQuMjEsMjQuMjkgNTQuODUsMjQuMTcgNTUuNDksMjQuMDggNTYuMTQsMjQuMDEgNTYuNzcsMjMuOTQgNTcuNDAsMjMuODUgNTguMDMsMjMuNzQgNTguNjUsMjMuNjYgNTkuMjcsMjMuNjIgNTkuODksMjMuNjIgNjAuNTEsMjMuNjIgNjEuMTIsMjMuNjAgNjEuNzMsMjMuNTQgNjIuMzMsMjMuNDggNjIuOTMsMjMuNDMgNjMuNTIsMjMuMzggNjQuMTEsMjMuMzIgNjQuNzAsMjMuMjYgNjUuMjgsMjMuMjAgNjUuODYsMjMuMTYgNjYuNDQsMjMuMjAgNjcuMDEsMjMuMjkgNjcuNTgsMjMuMzggNjguMTQsMjMuNDYgNjguNzAsMjMuNTIgNjkuMjUsMjMuNTYgNjkuODAsMjMuNTggNzAuMzUsMjMuNjAgNzAuODksMjMuNjQgNzEuNDMsMjMuNzAgNzEuOTYsMjMuNzggNzIuNDksMjMuODggNzMuMDEsMjQuMDAgNzMuNTIsMjQuMTIgNzQuMDQsMjQuMjIgNzQuNTUsMjQuMjggNzUuMDcsMjQuMzAgNzUuNTgsMjQuMjkgNzYuMTAsMjQuMjYgNzYuNjIsMjQuMjIgNzcuMTQsMjQuMTkgNzcuNjQsMjQuMjEgNzguMTMsMjQuMzEgNzguNjEsMjQuNDUgNzkuMDgsMjQuNTkgNzkuNTUsMjQuNzIgODAuMDIsMjQuODIgODAuNDksMjQuOTIgODAuOTYsMjUuMDIgODEuNDIsMjUuMTMgODEuODksMjUuMjIgODIuMzYsMjUuMjggODIuODMsMjUuMzUgODMuMzAsMjUuNDIgODMuNzUsMjUuNTEgODQuMjAsMjUuNjIgODQuNjUsMjUuNzQgODUuMDgsMjUuODggODUuNTMsMjUuOTggODUuOTcsMjYuMDkgODYuNDAsMjYuMjIgODYuODIsMjYuMzkgODcuMjMsMjYuNTcgODcuNjIsMjYuNzggODguMDEsMjYuOTggODguMTIsMjYuNzMgODcuNzIsMjYuNTUgODcuMzIsMjYuMzQgODYuOTUsMjYuMDkgODYuNTcsMjUuODIgODYuMjAsMjUuNTIgODUuODIsMjUuMjIgODUuNDIsMjQuOTYgODQuOTgsMjQuNzggODQuNTMsMjQuNjYgODQuMDYsMjQuNTggODMuNTgsMjQuNTEgODMuMTEsMjQuNDMgODIuNjQsMjQuMzMgODIuMTcsMjQuMjMgODEuNzAsMjQuMTAgODEuMjQsMjMuOTUgODAuNzcsMjMuODAgODAuMzAsMjMuNjUgNzkuODIsMjMuNTEgNzkuMzQsMjMuNDAgNzguODQsMjMuMzIgNzguMzQsMjMuMjQgNzcuODQsMjMuMTYgNzcuMzMsMjMuMTEgNzYuODAsMjMuMTEgNzYuMjgsMjMuMTUgNzUuNzQsMjMuMjMgNzUuMjAsMjMuMzIgNzQuNjcsMjMuMzggNzQuMTQsMjMuMzkgNzMuNjEsMjMuMzUgNzMuMDgsMjMuMzAgNzIuNTUsMjMuMjQgNzIuMDIsMjMuMTUgNzEuNDgsMjMuMDUgNzAuOTQsMjIuOTYgNzAuMzksMjIuODggNjkuODQsMjIuODIgNjkuMjksMjIuNzMgNjguNzMsMjIuNjIgNjguMTYsMjIuNTAgNjcuNTksMjIuNDAgNjcuMDIsMjIuMzUgNjYuNDQsMjIuMzIgNjUuODUsMjIuMzEgNjUuMjcsMjIuMjggNjQuNjcsMjIuMjIgNjQuMDcsMjIuMTYgNjMuNDcsMjIuMTEgNjIuODYsMjIuMDcgNjIuMjUsMjIuMDUgNjEuNjQsMjIuMDQgNjEuMDIsMjIuMDUgNjAuNDAsMjIuMTAgNTkuNzcsMjIuMTcgNTkuMTUsMjIuMjQgNTguNTIsMjIuMjkgNTcuODcsMjIuMjkgNTcuMjMsMjIuMjkgNTYuNTgsMjIuMzMgNTUuOTQsMjIuNDMgNTUuMzAsMjIuNTggNTQuNjYsMjIuNzYgNTQuMDEsMjIuOTQgNTMuMzYsMjMuMDcgNTIuNzAsMjMuMTggNTIuMDMsMjMuMjggNTEuMzYsMjMuMzkgNTAuNzAsMjMuNTggNTAuMDUsMjMuODQgNDkuNDAsMjQuMTQgNDguNzYsMjQuNDMgNDguMTAsMjQuNjkgNDcuNDMsMjQuOTEgNDYuNzQsMjUuMDkgNDYuMDUsMjUuMjUgNDUuMzYsMjUuNDMgNDQuNjcsMjUuNjIgNDMuOTcsMjUuNzkgNDMuMjYsMjUuOTMgNDIuNTMsMjYuMDUgNDEuODEsMjYuMjAgNDEuMTAsMjYuNDIgNDAuMzksMjYuNjMgMzkuNjYsMjYuODAgMzguOTEsMjYuOTIgMzguMTQsMjcuMDIgMzcuMzYsMjcuMDkgMzYuNTgsMjcuMTYgMzUuODAsMjcuMjcgMzUuMDUsMjcuNDcgMzQuMzIsMjcuNzggMzMuNjEsMjguMTUgMzIuOTIsMjguNTkgMzIuMjIsMjkuMDIgMzEuNTMsMjkuNDcgMzAuODAsMjkuODIgMzAuMDQsMzAuMTIgWiIvPjxwYXRoIGZpbGw9InVybCgjY2xnKSIgZD0iTSAxNzAuMTAsMjkuNzIgMTY5LjMzLDI5LjQ2IDE2OC41NywyOS4xOCAxNjcuODQsMjguODMgMTY3LjEyLDI4LjQ4IDE2Ni4zOSwyOC4xNCAxNjUuNjMsMjcuOTMgMTY0Ljg4LDI3LjcxIDE2NC4xNCwyNy40NSAxNjMuNDIsMjcuMTcgMTYyLjY5LDI2LjkwIDE2MS45NiwyNi42NiAxNjEuMjMsMjYuNDQgMTYwLjUwLDI2LjI0IDE1OS43NywyNi4wNSAxNTkuMDUsMjUuODYgMTU4LjM0LDI1LjY0IDE1Ny42NCwyNS4zOCAxNTYuOTUsMjUuMTEgMTU2LjI2LDI0Ljg1IDE1NS41NywyNC42MiAxNTQuODcsMjQuNDEgMTU0LjE4LDI0LjIyIDE1My40OCwyNC4wNSAxNTIuODAsMjMuODYgMTUyLjEyLDIzLjY2IDE1MS40NCwyMy40OCAxNTAuNzUsMjMuMzMgMTUwLjA2LDIzLjI0IDE0OS4zNywyMy4xNyAxNDguNzAsMjMuMDggMTQ4LjAzLDIyLjk0IDE0Ny4zNywyMi43OSAxNDYuNzEsMjIuNjYgMTQ2LjA0LDIyLjU3IDE0NS4zOCwyMi41NCAxNDQuNzEsMjIuNTMgMTQ0LjA1LDIyLjUxIDE0My40MCwyMi40NyAxNDIuNzUsMjIuNDUgMTQyLjExLDIyLjQ3IDE0MS40NiwyMi41MiAxNDAuODIsMjIuNTkgMTQwLjE4LDIyLjY4IDEzOS41NSwyMi43NSAxMzguOTMsMjIuNzggMTM4LjMyLDIyLjc2IDEzNy43MSwyMi43MyAxMzcuMTEsMjIuNzIgMTM2LjUxLDIyLjc0IDEzNS45MSwyMi43OCAxMzUuMzEsMjIuODIgMTM0LjczLDIyLjg3IDEzNC4xNCwyMi44OSAxMzMuNTYsMjIuODYgMTMyLjk5LDIyLjc5IDEzMi40MSwyMi42OSAxMzEuODQsMjIuNTkgMTMxLjI3LDIyLjQ4IDEzMC43MCwyMi40MCAxMzAuMTQsMjIuMzUgMTI5LjU4LDIyLjMzIDEyOS4wMiwyMi4zMCAxMjguNDYsMjIuMjggMTI3LjkxLDIyLjI2IDEyNy4zNiwyMi4yNiAxMjYuODIsMjIuMjcgMTI2LjI3LDIyLjMwIDEyNS43NCwyMi4zNCAxMjUuMjEsMjIuNDQgMTI0LjcwLDIyLjU3IDEyNC4xOSwyMi43MiAxMjMuNjgsMjIuODcgMTIzLjE4LDIzLjA0IDEyMi42OSwyMy4xOSAxMjIuMTksMjMuMzMgMTIxLjY5LDIzLjQxIDEyMS4xOCwyMy40MiAxMjAuNjcsMjMuNDIgMTIwLjE2LDIzLjQyIDExOS42NiwyMy40NyAxMTkuMTcsMjMuNTUgMTE4LjY5LDIzLjY3IDExOC4yMiwyMy44MCAxMTcuNzYsMjMuOTcgMTE3LjMxLDI0LjE0IDExNi44NiwyNC4zMiAxMTYuNDEsMjQuNDggMTE1Ljk1LDI0LjYxIDExNS41MCwyNC43NCAxMTUuMDUsMjQuODggMTE0LjYyLDI1LjA1IDExNC4yMCwyNS4yNiAxMTMuNzksMjUuNDggMTEzLjQyLDI1Ljc4IDExMy4wNCwyNi4wNiAxMTIuNjcsMjYuMzMgMTEyLjI3LDI2LjUzIDExMS44NywyNi43MiAxMTIuMDEsMjcuMDEgMTEyLjQwLDI2LjgzIDExMi44MiwyNi42NyAxMTMuMjYsMjYuNTggMTEzLjcxLDI2LjUwIDExNC4xNywyNi40NSAxMTQuNjEsMjYuMzMgMTE1LjA0LDI2LjIxIDExNS40NywyNi4wOCAxMTUuODksMjUuOTAgMTE2LjMxLDI1LjcwIDExNi43NCwyNS41MiAxMTcuMTgsMjUuMzcgMTE3LjYzLDI1LjI1IDExOC4wOSwyNS4xNCAxMTguNTUsMjUuMDQgMTE5LjAzLDI0Ljk3IDExOS41MSwyNC45NSAxMjAuMDEsMjQuOTYgMTIwLjUxLDI0Ljk2IDEyMS4wMCwyNC45MyAxMjEuNDgsMjQuODcgMTIxLjk2LDI0Ljc4IDEyMi40NSwyNC42OCAxMjIuOTMsMjQuNTcgMTIzLjQyLDI0LjQ0IDEyMy45MCwyNC4yOSAxMjQuMzksMjQuMTMgMTI0Ljg5LDI0LjAwIDEyNS40MCwyMy44OSAxMjUuOTEsMjMuODAgMTI2LjQzLDIzLjc0IDEyNi45NiwyMy42OSAxMjcuNDksMjMuNjYgMTI4LjAyLDIzLjYzIDEyOC41NiwyMy42MCAxMjkuMTAsMjMuNTUgMTI5LjY0LDIzLjUwIDEzMC4xOSwyMy40MyAxMzAuNzQsMjMuNDAgMTMxLjMwLDIzLjQwIDEzMS44NiwyMy40MyAxMzIuNDIsMjMuNDggMTMyLjk5LDIzLjU0IDEzMy41NiwyMy41OSAxMzQuMTQsMjMuNjIgMTM0LjcxLDIzLjY2IDEzNS4yOSwyMy43MCAxMzUuODgsMjMuNzUgMTM2LjQ2LDIzLjgwIDEzNy4wNiwyMy44MyAxMzcuNjUsMjMuODQgMTM4LjI1LDIzLjg3IDEzOC44NiwyMy45MiAxMzkuNDYsMjMuOTYgMTQwLjA4LDIzLjk3IDE0MC43MCwyMy45NiAxNDEuMzIsMjMuOTMgMTQxLjk2LDIzLjg5IDE0Mi41OSwyMy44OSAxNDMuMjMsMjMuOTQgMTQzLjg2LDI0LjA0IDE0NC40OSwyNC4xNiAxNDUuMTMsMjQuMjggMTQ1Ljc4LDI0LjM4IDE0Ni40MywyNC40MyAxNDcuMTAsMjQuNDUgMTQ3Ljc3LDI0LjQ5IDE0OC40NCwyNC41NyAxNDkuMDksMjQuNzIgMTQ5Ljc1LDI0LjkxIDE1MC40MSwyNS4xMCAxNTEuMDgsMjUuMjQgMTUxLjc3LDI1LjM1IDE1Mi40NiwyNS40NiAxNTMuMTUsMjUuNTggMTUzLjg0LDI1LjczIDE1NC41MiwyNS45MyAxNTUuMjAsMjYuMTUgMTU1Ljg4LDI2LjQwIDE1Ni41NywyNi42MyAxNTcuMjcsMjYuODMgMTU3Ljk3LDI3LjAyIDE1OC42OCwyNy4yMSAxNTkuMzksMjcuNDMgMTYwLjEwLDI3LjY2IDE2MC44MSwyNy44OSAxNjEuNTMsMjguMTIgMTYyLjI2LDI4LjMzIDE2My4wMCwyOC41MyAxNjMuNzQsMjguNzMgMTY0LjQ5LDI4LjkyIDE2NS4yNCwyOS4xNCAxNjYuMDAsMjkuMzUgMTY2LjgwLDI5LjQzIDE2Ny42MSwyOS41MCAxNjguNDMsMjkuNjAgMTY5LjIxLDI5LjgwIDE2OS45OCwzMC4wNiBaIi8+PHBhdGggZmlsbD0idXJsKCNjbGcpIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGQ9Ik0gOTkuODYsMTYuMDMgMTAwLjAyLDE2LjgzIDEwMC4xNywxNy42MCAxMDAuMzMsMTguMzUgMTAwLjUxLDE5LjA3IDEwMC43MiwxOS43NiAxMDAuOTQsMjAuNDMgMTAxLjE4LDIxLjA2IDEwMS40NCwyMS42NiAxMDEuNzAsMjIuMjMgMTAxLjk2LDIyLjgwIDEwMi4yMiwyMy4zNCAxMDIuNDgsMjMuODcgMTAyLjczLDI0LjQwIDEwMy4wMiwyNC45MCAxMDMuMzYsMjUuMzUgMTAzLjc3LDI1LjcyIDEwNC4yMSwyNi4wNCAxMDQuNjYsMjYuMzIgMTA0Ljc5LDI2LjIyIDEwNC44MCwyNS42MSAxMDQuNDUsMjUuODQgMTA0LjA0LDI2LjE3IDEwMy42NCwyNi41NCAxMDMuMjQsMjYuOTIgMTAyLjg1LDI3LjMzIDEwMi40OSwyNy43OCAxMDIuMTcsMjguMjcgMTAxLjg3LDI4LjgwIDEwMS41NywyOS4zNCAxMDEuMjgsMjkuOTEgMTAxLjAxLDMwLjUwIDEwMC43NiwzMS4xMyAxMDAuNTMsMzEuNzkgMTAwLjMyLDMyLjQ4IDEwMC4xNSwzMy4yMCAxMDAuMDAsMzMuOTUgOTkuODMsMzQuNzEgOTkuNjUsMzUuMzkgMTAwLjQwLDM1LjM3IDEwMC4zMCwzNC42OCAxMDAuMDgsMzMuOTIgOTkuODIsMzMuMjEgOTkuNTQsMzIuNTMgOTkuMjgsMzEuODYgOTkuMDIsMzEuMjIgOTguNzMsMzAuNjIgOTguNDMsMzAuMDUgOTguMTMsMjkuNTAgOTcuODcsMjguOTYgOTcuNjEsMjguNDIgOTcuMzIsMjcuOTIgOTYuOTYsMjcuNDkgOTYuNTUsMjcuMTEgOTYuMTMsMjYuNzggOTUuNzIsMjYuNDYgOTUuMzIsMjYuMTUgOTQuOTUsMjUuOTAgOTQuODUsMjYuMDggOTUuMTEsMjUuOTkgOTUuNTEsMjUuNjkgOTUuOTEsMjUuMzYgOTYuMjksMjUuMDEgOTYuNjYsMjQuNjIgOTcuMDAsMjQuMTkgOTcuMzMsMjMuNzMgOTcuNjQsMjMuMjUgOTcuOTUsMjIuNzQgOTguMjMsMjIuMjAgOTguNTEsMjEuNjMgOTguNzksMjEuMDQgOTkuMDgsMjAuNDMgOTkuMzcsMTkuODAgOTkuNjMsMTkuMTIgOTkuODMsMTguNDAgMTAwLjAzLDE3LjY2IDEwMC4yMSwxNi44OSAxMDAuMzksMTYuMDkgWiBNIDk5LjIwLDE1LjgyIDk5LjAzLDE2LjYwIDk4Ljg5LDE3LjM1IDk4Ljc0LDE4LjA4IDk4LjU4LDE4Ljc4IDk4LjQ1LDE5LjQ3IDk4LjMyLDIwLjEzIDk4LjE0LDIwLjc2IDk3LjkwLDIxLjM0IDk3LjYzLDIxLjg4IDk3LjMzLDIyLjM4IDk3LjAzLDIyLjg2IDk2LjczLDIzLjMxIDk2LjQwLDIzLjcyIDk2LjA3LDI0LjEwIDk1Ljc0LDI0LjQ2IDk1LjQwLDI0Ljc5IDk1LjA1LDI1LjExIDk0LjcwLDI1LjM5IDk0LjE4LDI1LjgxIDk0LjQ5LDI2LjQzIDk0LjkxLDI2LjcxIDk1LjI4LDI2Ljk5IDk1LjYxLDI3LjMzIDk1LjkwLDI3LjcyIDk2LjE4LDI4LjE0IDk2LjQ3LDI4LjU2IDk2LjgwLDI4Ljk3IDk3LjE0LDI5LjQxIDk3LjQ1LDI5Ljg4IDk3LjcwLDMwLjQyIDk3Ljk0LDMwLjk4IDk4LjE2LDMxLjU4IDk4LjM4LDMyLjIwIDk4LjU3LDMyLjg2IDk4LjcxLDMzLjU1IDk4Ljg0LDM0LjI3IDk5LjAwLDM1LjAxIDk5LjI3LDM1LjkwIDEwMC42OCwzNS44OCAxMDAuODYsMzQuOTcgMTAxLjA0LDM0LjI0IDEwMS4yNiwzMy41NCAxMDEuNDgsMzIuODcgMTAxLjcwLDMyLjIzIDEwMS45MywzMS42MiAxMDIuMTgsMzEuMDQgMTAyLjQ2LDMwLjUwIDEwMi43MywyOS45OCAxMDMuMDMsMjkuNTEgMTAzLjM1LDI5LjA3IDEwMy42NiwyOC42NiAxMDMuOTcsMjguMjYgMTA0LjI4LDI3Ljg5IDEwNC42MCwyNy41NSAxMDQuOTIsMjcuMjMgMTA1LjI1LDI2LjkyIDEwNS42MywyNi41NyAxMDUuOTEsMjUuNzggMTA1LjMyLDI1LjM2IDEwNC45NCwyNS4xMSAxMDQuNTksMjQuODAgMTA0LjI1LDI0LjQ3IDEwMy45MiwyNC4xMSAxMDMuNTksMjMuNzMgMTAzLjI3LDIzLjMxIDEwMy4wMCwyMi44NCAxMDIuNzYsMjIuMzMgMTAyLjUxLDIxLjgxIDEwMi4yNiwyMS4yNyAxMDIuMDAsMjAuNzAgMTAxLjc2LDIwLjEwIDEwMS41NCwxOS40NyAxMDEuMzMsMTguODEgMTAxLjEzLDE4LjEyIDEwMC45MiwxNy40MCAxMDAuNzIsMTYuNjYgMTAwLjUzLDE1Ljg4IFoiLz48Y2lyY2xlIGZpbGw9InVybCgjY2xnKSIgY3g9IjIwIiBjeT0iMzAiIHI9IjEuNiIvPjxjaXJjbGUgZmlsbD0idXJsKCNjbGcpIiBjeD0iMTgwIiBjeT0iMzAiIHI9IjEuNiIvPjwvc3ZnPg==\");\n  --offstage-icon-bg: rgba(201,154,91,.09);\n  --offstage-line: rgba(201,154,91,.2);\n  --offstage-muted: #9a7854;\n  --offstage-on-ink: #f6dcb0;\n  --offstage-page: #26150e;\n  --offstage-panel-bg: #1a0e08;\n  --offstage-panel-ink: #dcc39c;\n  --offstage-pen: #c9a066;\n  --offstage-pen-hi: #f6dcb0;\n  --offstage-pop-shadow: 0 14px 40px rgba(0,0,0,.6);\n  --offstage-scroll: rgba(201,154,91,.25);\n  --offstage-title: #f0dcb8;\n  --offstage-veil-card: rgba(20,11,7,.84);\n}\n";
-}
