@@ -127,7 +127,7 @@ third-party extensions first.
    Add the line if it isn't there. Restart Marinara.
 2. **Allow imports in the app.** **Settings → Advanced → Danger Zone**, read the warning, turn on
    **Allow third-party extension imports** and confirm **I Understand, Enable**.
-3. **Import.** Download `Offstage-2.0.0.personal-extension.zip` from
+3. **Import.** Download `Offstage-2.0.1.personal-extension.zip` from
    [Releases](../../releases) (don't unzip it). **Settings → Addons → External Extensions →
    Import Extension File** and pick the zip. (**Import Extension Folder** takes this
    repository's `offstage` folder instead.)

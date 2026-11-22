@@ -6,7 +6,7 @@
 // Internal identifiers (chat metadata keys, CSS classes, storage keys) keep the original
 // "kulisy" prefix (the panel's Russian name) so existing chats keep working.
 
-const VERSION = "2.0.0";
+const VERSION = "2.0.1";
 const ACTIVE_CHAT_KEY = "marinara-active-chat-id";
 const AWAY_KEY = "kulisyAway"; // chat metadata: { characterId → createdAt of the last message when they left }
 const EAR_KEY = "kulisyEarLorebookId"; // chat metadata: id of this chat's "in their ear" lorebook
@@ -1196,10 +1196,11 @@ function buildScene() {
   }
 }
 
-function sceneChip(text, title) {
+function sceneChip(text, title, feelKey) {
   const chip = document.createElement("span");
   chip.className = "kulisy-char-chip";
-  chip.textContent = text;
+  if (feelKey) chip.append(feelIcon(feelKey), text);
+  else chip.textContent = text;
   if (title) chip.title = title;
   return chip;
 }
@@ -1226,7 +1227,7 @@ function paintScene() {
     const chips = [];
     for (const item of feel.data[id] || []) {
       const def = FEELING_BY_KEY[item.e];
-      if (def) chips.push(sceneChip(def.emoji + LEVEL_DOTS[item.lv], `${feelWord(def.key)} — ${LEVEL_WORD[lang][item.lv]}`));
+      if (def) chips.push(sceneChip(LEVEL_DOTS[item.lv], `${feelWord(def.key)} — ${LEVEL_WORD[lang][item.lv]}`, def.key));
     }
     const words = modeWords(modeOf(id));
     if (words) chips.push(sceneChip(words, t("sec_mode")));
@@ -2195,11 +2196,12 @@ function feelText(id) {
   return [t("feel_head", { name: state.names[id] || t("character") }), ...lines, tail.join(" ")].join("\n");
 }
 
-// An emotion's icon: the outline is a CSS mask (extension.css, [data-e]), coloured by the text colour.
+// An emotion's emoji in its own span: the Damask theme draws Leah's icon over .kulisy-ei[data-e] (its 98-offstage.css).
 function feelIcon(key, cls = "kulisy-ei") {
   const icon = document.createElement("span");
   icon.className = cls;
   icon.dataset.e = key;
+  icon.textContent = FEELING_BY_KEY[key].emoji;
   icon.setAttribute("aria-hidden", "true");
   return icon;
 }
@@ -2232,8 +2234,7 @@ function renderFeel() {
     button.title = item ? `${feelWord(def.key)} — ${LEVEL_WORD[lang][item.lv]}` : feelWord(def.key);
     button.setAttribute("aria-label", button.title);
     button.setAttribute("aria-pressed", item ? "true" : "false");
-    const emoji = document.createElement("span");
-    emoji.textContent = def.emoji;
+    const emoji = feelIcon(def.key);
     const dots = document.createElement("span");
     dots.className = "kulisy-feel-dots";
     dots.textContent = item ? LEVEL_DOTS[item.lv] : "";
@@ -2261,7 +2262,7 @@ function renderFeel() {
     const title = document.createElement("div");
     title.className = "kulisy-feel-item-title";
     const word = document.createElement("span");
-    word.textContent = `${def.emoji} ${feelWord(def.key)}`;
+    word.append(feelIcon(def.key), ` ${feelWord(def.key)}`);
     const level = document.createElement("button");
     level.type = "button";
     level.className = "kulisy-feel-level";

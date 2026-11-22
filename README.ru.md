@@ -96,7 +96,7 @@
    поставь `ENABLE_EXTERNAL_EXTENSIONS=true` (нет строки — допиши) и перезапусти маринару.
 2. **Settings → Advanced → Danger Zone** → включи **Allow third-party extension imports** →
    **I Understand, Enable**.
-3. Скачай `Offstage-2.0.0.personal-extension.zip` из [Releases](../../releases),
+3. Скачай `Offstage-2.0.1.personal-extension.zip` из [Releases](../../releases),
    не распаковывай. **Settings → Addons → External Extensions → Import Extension File** →
    выбери архив.
 4. Кнопка питания в строке Offstage (*Needs approval · Full page access*) → **Review and run** →
